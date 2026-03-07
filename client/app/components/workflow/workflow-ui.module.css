@@ -1,0 +1,205 @@
+.stage {
+  border: 1px solid rgba(143, 187, 210, 0.4);
+  border-radius: 18px;
+  background:
+    radial-gradient(220px 130px at 88% 0%, rgba(92, 172, 208, 0.17), transparent 72%),
+    linear-gradient(180deg, rgba(8, 20, 30, 0.9), rgba(7, 16, 24, 0.82));
+  box-shadow: 0 16px 38px rgba(2, 8, 13, 0.42);
+  contain: paint;
+  transform: translateZ(0);
+  padding: 1.1rem;
+  display: grid;
+  gap: 0.96rem;
+}
+
+.stageHeader {
+  display: grid;
+  gap: 0.62rem;
+}
+
+.stageIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(141, 214, 246, 0.42);
+  background: rgba(16, 38, 52, 0.74);
+  color: #d6f2ff;
+  font-family: var(--coverfi-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.6rem;
+}
+
+.stageTitle {
+  margin: 0;
+  font-size: clamp(1.18rem, 2.3vw, 1.36rem);
+  line-height: 1.22;
+  letter-spacing: -0.02em;
+  color: #e8f4fc;
+}
+
+.stageSummary {
+  margin: 0.4rem 0 0;
+  color: #a7bfd0;
+  font-size: 0.94rem;
+  line-height: 1.6;
+}
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.stageChip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(130, 181, 206, 0.38);
+  background: rgba(15, 33, 47, 0.8);
+  color: #cfe7f5;
+  font-size: 0.72rem;
+  font-family: var(--coverfi-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 0.24rem 0.64rem;
+}
+
+.stageBody {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.explanationBox {
+  border: 1px solid rgba(132, 182, 208, 0.28);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(10, 22, 33, 0.84), rgba(8, 17, 27, 0.72)),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.015) 0,
+      rgba(255, 255, 255, 0.015) 1px,
+      transparent 1px,
+      transparent 28px
+    );
+  padding: 0.75rem 0.82rem;
+  display: grid;
+  gap: 0.52rem;
+}
+
+.explanationLabel {
+  margin: 0;
+  color: #a4def7;
+  font-family: var(--coverfi-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.explanationTitle {
+  margin: 0;
+  font-size: 1.02rem;
+  color: #e5f2fa;
+}
+
+.explanationBody {
+  margin: 0;
+  color: #aac0ce;
+  line-height: 1.62;
+  font-size: 0.93rem;
+}
+
+.checkList {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.42rem;
+  color: #d2e3ef;
+  line-height: 1.57;
+  font-size: 0.88rem;
+}
+
+.checkList li::marker {
+  color: rgba(151, 215, 242, 0.88);
+}
+
+.previewPanel {
+  border: 1px solid rgba(144, 191, 215, 0.34);
+  border-radius: 14px;
+  background: rgba(11, 23, 35, 0.8);
+  padding: 0.85rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.panelHeading {
+  margin: 0;
+  color: #dff2fb;
+  font-size: 0.87rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.metaLine {
+  margin: 0;
+  color: #b1c8d7;
+  font-size: 0.84rem;
+  line-height: 1.54;
+}
+
+.errorLine {
+  margin: 0;
+  color: #ffb4b4;
+  font-size: 0.82rem;
+}
+
+.actionButton {
+  width: fit-content;
+  border-color: rgba(144, 198, 224, 0.56);
+  background: rgba(245, 252, 255, 0.95);
+  color: #0d1d2b;
+  font-size: 0.83rem;
+  letter-spacing: 0.01em;
+}
+
+.resultPanel {
+  border: 1px solid rgba(129, 173, 198, 0.34);
+  border-radius: 13px;
+  background: rgba(7, 16, 24, 0.8);
+  overflow: hidden;
+}
+
+.resultHeader {
+  margin: 0;
+  padding: 0.58rem 0.72rem;
+  border-bottom: 1px solid rgba(129, 173, 198, 0.26);
+  color: #d8ecf8;
+  font-size: 0.82rem;
+  font-family: var(--coverfi-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.resultBody {
+  margin: 0;
+  padding: 0.82rem;
+  overflow-x: auto;
+  font-size: 0.81rem;
+  color: #d8ebf7;
+  line-height: 1.55;
+}
+
+@media (max-width: 640px) {
+  .stage {
+    padding: 0.82rem;
+  }
+
+  .previewPanel {
+    padding: 0.66rem;
+  }
+
+  .resultBody {
+    font-size: 0.75rem;
+  }
+}
