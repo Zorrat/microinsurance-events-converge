@@ -1,0 +1,22 @@
+{
+  "action": "MINT",
+  "approved": false,
+  "signedQuote": {
+    "quote": {
+      "coverageEnd": 1773419400,
+      "coverageStart": 1772493364,
+      "eventId": "497852368837",
+      "eventIdHash": "0x3e2bf849c2e327da0fb0d7c6f0582d5d34f769463a69393ecb174d931b823db3",
+      "eventStart": 1773322200,
+      "insured": "0x5125E6b78b5Cf53248EcB5A22Ce539341FE90Cd8",
+      "nonce": "0xe37709bab26589d6f77f09d6ff9a3627abc35983674cfde0fcfa9a6be2815d70",
+      "payoutUSDC": "10000000",
+      "premiumUSDC": "1000000",
+      "quoteExpiry": 1772496964,
+      "quoteVersion": 1
+    },
+    "quoteHash": "0x436d343ec1bf9dca548497dc4230de8edfa1fefe53e5bdcbda145ea2730f6939",
+    "signature": "0xe9362bb40ecf078be3b1c0b0e2358092f791552b84e2964ab489e10e979f69f94f4169caf8329179613b1fba24fa7ccb1f9a2ebbed5a8ea0861e432a197a9dcd1b",
+    "signer": "0x7e813EC06504032c965C33C790f27c3D2A21aaA2"
+  }
+}

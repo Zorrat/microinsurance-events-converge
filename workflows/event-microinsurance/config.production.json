@@ -1,0 +1,47 @@
+{
+  "chainFamily": "evm",
+  "chainSelectorName": "ethereum-testnet-sepolia-base-1",
+  "isTestnet": true,
+  "receiver": "0xF0e47056A1ab670F11Ae066F1661952f5ae35d1d",
+  "authorizedKeys": [
+    {
+      "type": "KEY_TYPE_ECDSA_EVM",
+      "publicKey": "0x15d265Dc32a575755ACA19b5EcEAB8018CdD26F1"
+    }
+  ],
+  "eventbriteApiBaseUrl": "https://www.eventbriteapi.com/v3",
+  "eventbriteApiTokenSecretName": "EVENTBRITE_API_TOKEN",
+  "secretsNamespace": "env",
+  "quoteSignerPrivateKeySecretName": "QUOTE_SIGNER_PK",
+  "quoteSignerAddress": "0x7e813EC06504032c965C33C790f27c3D2A21aaA2",
+  "quoteVersion": 1,
+  "pricing": {
+    "capacityThresholds": [
+      200,
+      1000
+    ],
+    "payoutTiersUSDC": [
+      "10000000",
+      "25000000",
+      "50000000"
+    ],
+    "baseCancelBps": 200,
+    "minCancelBps": 50,
+    "maxCancelBps": 2000,
+    "capacityWeightBps": 70,
+    "modeWeightBps": 30,
+    "timeWeightBps": 50,
+    "salesWeightBps": 40,
+    "geminiWeightBps": 60,
+    "expenseLoadBps": 800,
+    "profitLoadBps": 600,
+    "reserveUtilizationTriggerBps": 8000,
+    "reserveLoadSlopeBps": 2000,
+    "flatFeeUSDC": "500000",
+    "minPremiumUSDC": "1000000"
+  },
+  "gemini": {
+    "enabled": false,
+    "defaultRiskOrdinal": 0
+  }
+}

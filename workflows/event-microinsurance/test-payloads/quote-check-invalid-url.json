@@ -1,0 +1,6 @@
+{
+  "action": "QUOTE_CHECK",
+  "eventUrl": "https://example.com/not-an-eventbrite-event",
+  "eventName": "Bad URL Test",
+  "insured": "0x5125E6b78b5Cf53248EcB5A22Ce539341FE90Cd8"
+}

@@ -1,0 +1,378 @@
+# Event Micro-Insurance Protocol
+
+## Luma + Gemini + Chainlink CRE + x402
+
+### USDC Vault + Soulbound NFT + Single Workflow Architecture
+
+---
+
+1. EXECUTIVE SUMMARY
+
+---
+
+This protocol implements decentralized micro-insurance for event cancellation.
+
+Users can:
+
+1. Request a quote
+2. Purchase a parameterized micro-insurance using USDC (via x402 protocol)
+3. Submit a claim if the event is cancelled
+
+The system integrates:
+
+* Luma API (event validation)
+* Gemini API (AI cancellation verification)
+* Chainlink CRE (secure offchain orchestration with consensus)
+* x402 (pay-to-access endpoints)
+* USDC (reserve asset)
+* PolicyVault (onchain solvency enforcement)
+* PolicyNFT (policy representation)
+* CREReceiver (forwarder-gated execution entrypoint)
+
+There is NO backend database.
+All critical state is enforced onchain.
+
+---
+
+2. CORE ARCHITECTURE
+
+---
+
+ONCHAIN CONTRACTS:
+
+* PolicyNFT (ERC721, soulbound)
+* PolicyVault (USDC reserve engine)
+* CREReceiver (forwarder-gated router and orchestrator)
+
+OFFCHAIN COMPONENTS:
+
+* Single CRE Workflow with 3 actions
+* x402 payment gateway
+* Luma API integration
+* Gemini validation logic
+
+---
+
+3. CRE SECURITY MODEL
+
+---
+
+CRE does NOT call contracts directly.
+
+Workflow --> KeystoneForwarder --> onReport() --> Contract
+
+The Forwarder:
+
+* Verifies DON signatures
+* Verifies workflow identity
+* Delivers verified report to contract
+
+Contracts MUST:
+
+* Validate msg.sender == forwarder
+* Decode report safely
+* Execute minimal state transitions
+
+All business logic offchain.
+All state transitions onchain.
+
+---
+
+4. SINGLE WORKFLOW DESIGN
+
+---
+
+The protocol uses ONE unified CRE workflow handling:
+
+* GET_QUOTE
+* BUY_POLICY
+* CLAIM_POLICY
+
+
+This minimizes attack surface and debugging complexity.
+
+---
+
+5. WORKFLOW EXECUTION LOGIC
+
+---
+
+==============================
+5.1 GET_QUOTE (src/actions/quote.ts)
+=============
+
+Trigger: HTTP (x402 payment required - handled implicitly before workflow)
+
+Quote path is read-only. All state mutation happens via onchain CREReceiver reports in MINT/CLAIM.
+Constants: QUOTE_TTL_SEC = 3600 (1 hour), COVERAGE_EXTENSION_SEC = 86400 (24 hours).
+
+Workflow Steps:
+
+1. Validate input addresses (`insured`, `receiver`).
+2. Parse and normalize Luma/Eventbrite event URL to extract `canoncialEventId`.
+3. Fetch event status and details via API (`fetchEventbriteEvent`).
+4. Rejection Checks:
+   * If `event.canceled == true` -> Reject: `EVENT_ALREADY_CANCELED`
+   * If time boundary unavailable -> Reject: `EVENT_TIME_UNAVAILABLE`
+   * If `coverageEnd <= coverageStart` -> Reject: `COVERAGE_WINDOW_ALREADY_PASSED`
+5. Generate warning if `eventName` input mismatches the API title.
+6. Read onchain state (via `evm.callContract` at `LAST_FINALIZED_BLOCK_NUMBER`):
+   * Validate `policyVault` and `usdc` addresses.
+   * Read `requiredReserves`, `totalActiveLiabilityUSDC`, `minReserveRatioBps` from PolicyVault.
+   * Read `vaultBalanceUSDC` from USDC contract.
+7. Compute Pricing (via `computePricing` and `geminiOrdinal` if enabled):
+   * Calculates `pCancelBps`, `expectedLossUSDC`, `computedPayoutUSDC`, `computedPremiumUSDC`.
+8. Solvency Check:
+   * `newLiability = totalActiveLiabilityUSDC + payoutUSDC`
+   * `requiredAfter = (newLiability * minReserveRatioBps) / 10000`
+   * If `vaultBalanceUSDC < requiredAfter` -> Reject: `INSUFFICIENT_RESERVES_FOR_PAYOUT`
+9. Construct stateless quote object and sign it with workflow key `quoteHash = keccak256(...)`.
+
+Return to user: `quoteValid`, `canonicalEventId`, pricing info, warnings, and `signedQuote`.
+
+
+==============================
+5.2 PRICING & UNDERWRITING LOGIC (src/services/pricing.ts)
+================================
+
+Trigger: Called synchronously during GET_QUOTE.
+
+Pricing is determined by combining event characteristics, AI risk assessment, and onchain reserve health.
+
+Variables:
+* Base Risk: `baseCancelBps = 200`
+* Tiers: Determined by event capacity (`capacityThresholds: [200, 1000]`).
+  - Tier 0 (£1,000 payout): capacity <= 200
+  - Tier 1 (£2,500 payout): 200 < capacity <= 1000
+  - Tier 2 (£5,000 payout): capacity > 1000
+
+Risk Multipliers (Ordinals):
+* Capacity Ordinal (0, 1, 2) * `capacityWeightBps`
+* Mode Ordinal (Online=1, Offline=0) * `modeWeightBps`
+* Time Ordinal (<24h=2, <7d=1, else=0) * `timeWeightBps`
+* Sales Ordinal (Sold Out=2, Unavailable=1, else=0) * `salesWeightBps`
+* Gemini Ordinal (AI Assessment: 0-2) * `geminiWeightBps`
+
+Math:
+1. `pCancelBps = baseCancelBps + SUM(Ordinal * Weight)` clamped between `minCancelBps` and `maxCancelBps`.
+2. `expectedLossUSDC = payoutUSDC * (pCancelBps / 10000)`
+3. Reserve Utilization Load:
+   - If vault reserves are highly utilized (>80%), a `reserveLoadSlopeBps` penalty is applied to strictly discourage minting when nearing insolvency.
+4. Total Load = `expenseLoadBps(800) + profitLoadBps(600) + reserveLoadBps`
+5. `loadedLossUSDC = expectedLossUSDC * (1 + TotalLoad / 10000)`
+6. `premiumUSDC = Max(loadedLossUSDC + flatFeeUSDC, minPremiumUSDC)`
+
+
+==============================
+5.3 BUY_POLICY / MINT (src/actions/mint.ts)
+==============
+
+Trigger: HTTP (premium paid via x402 implicitly)
+
+Workflow Steps:
+
+1. Validate `approved` flag.
+2. Verify `signedQuote` payload using DON signature verification (`verifySignedQuote`).
+3. Fetch current event state via API.
+4. Pre-mint Checks:
+   * If `event.canceled == true` -> Reject: `EVENT_ALREADY_CANCELED`
+   * If `quote.quoteExpiry <= now` -> Reject: `QUOTE_EXPIRED`
+5. Fetch `policyNft` address from CREReceiver.
+6. Record `nextPolicyIdBefore` from PolicyNFT.
+7. Encode `MINT` report (Action=0) mapping quote parameters to Solidity struct.
+8. Submit `runtime.report(...)` and dispatch `evm.writeReport` to `CREReceiver`.
+9. Confirm txHash and that `nextPolicyIdBefore` advanced.
+
+Onchain Effects:
+CREReceiver calls PolicyNFT.mintPolicy() and PolicyVault.activatePolicy().
+PolicyVault enforces reserve ratio and increases totalActiveLiability.
+PolicyNFT stores immutable policy parameters and sets status = ACTIVE.
+
+
+==============================
+5.3 CLAIM_POLICY (src/actions/claim.ts)
+================
+
+Trigger: HTTP (x402 operational fee implicitly)
+
+Workflow Steps:
+
+1. Read `policyNft` address from CREReceiver.
+2. Read policy parameters directly from `PolicyNFT.getPolicy(policyId)` via EVM call.
+3. Verify `policy.eventId` matches the user `input.eventId` -> Reject: `EVENT_ID_MISMATCH`.
+4. Fetch current event state via API.
+5. Determine Settlement Decision:
+   * `decision = NO_OP`
+   * If `event.canceled == true` -> `decision = PAY`
+   * Else if `now > policyCoverageEndSeconds` -> `decision = RESOLVE_NO_PAYOUT`
+6. If `NO_OP`, return early (no settlement submitted).
+7. If settled, encode report:
+   * PAY -> Action=1
+   * RESOLVE_NO_PAYOUT -> Action=2
+8. Submit `runtime.report(...)` and dispatch `evm.writeReport` to `CREReceiver`.
+
+Onchain Effects:
+PAY: Vault.payClaim(), NFT.setStatusPaid(), Liability -= payout, USDC to NFT owner.
+RESOLVE: Vault.resolvePolicyNoPayout(), NFT.setStatusResolvedNoPayout(), Liability -= payout.
+
+Double payout impossible due to state transition rules.
+
+---
+
+6. SMART CONTRACT DESIGN
+
+---
+
+==============================
+6.1 PolicyNFT
+=============
+
+Soulbound ERC721.
+
+Responsibilities:
+
+* Store policy parameters
+* Enforce non-transferability
+* Maintain lifecycle state
+
+Policy Struct:
+
+* eventIdHash
+* lumaEventId
+* eventStart
+* coverageStart
+* coverageEnd
+* quoteExpiry
+* payoutUSDC
+* premiumUSDC
+* insured
+* status
+
+Status Enum:
+
+* NONE
+* ACTIVE
+* PAID
+* RESOLVED_NO_PAYOUT
+
+Security Properties:
+
+* Only CREReceiver may mint
+* Only CREReceiver may change status
+* transfer() overridden to revert
+
+==============================
+6.2 PolicyVault
+===============
+
+Holds USDC reserves.
+
+Tracks:
+
+* totalActiveLiabilityUSDC
+
+Solvency Rule:
+
+balance >= (totalActiveLiability * reserveRatio) / 10000
+
+Default reserveRatio = 11000 (110%)
+
+Rules:
+
+* Liability increases only on mint
+* Liability decreases only on PAY or RESOLVE
+* Withdrawals allowed only if solvency maintained
+* Claims always paid to NFT owner
+
+Prevents:
+
+* Over-issuance
+* Insolvency
+* Vault draining
+
+==============================
+6.3 CREReceiver
+===============
+
+Minimal forwarder-gated router.
+
+onReport():
+
+* Require msg.sender == forwarder
+* Decode action enum
+* Route to NFT + Vault
+
+Actions:
+
+* MINT
+* PAY
+* RESOLVE
+
+No underwriting logic.
+No business logic.
+Only deterministic state transitions.
+
+---
+
+7. x402 PAYMENT MODEL (Pattern A)
+
+---
+
+Each endpoint requires payment:
+
+/getQuote --> operational fee
+/buy --> premium
+/claim --> operational fee
+
+All funds go directly to PolicyVault.
+
+Vault funds serve:
+
+* Claims reserve
+* Operational buffer
+
+CRE workflow execution cost is billed to workflow owner separately.
+
+---
+
+8. SECURITY GUARANTEES
+
+---
+
+* Forwarder-only onReport
+* Signed quotes
+* Expiry + nonce replay protection
+* Soulbound NFT
+* Strict state transitions
+* Deterministic liability accounting
+* Onchain solvency enforcement
+* No database dependency
+* No upgradeable proxies
+
+---
+
+9. SYSTEM INVARIANTS
+
+---
+
+1. totalActiveLiability reflects ACTIVE policies.
+2. Vault solvent after every mint.
+3. Liability decreases exactly once per policy.
+4. Policy state transitions are monotonic.
+5. Payout always sent to NFT owner.
+6. No mint without solvency.
+7. No payout without ACTIVE status.
+
+---
+
+10. FINAL ARCHITECTURE STATUS
+
+---
+
+Single workflow with 3 actions.
+Three contracts.
+No database.
+Reserve-backed solvency.
+Deterministic settlement.
+Tamper-resistant CRE integration.
+Hackathon-ready design.

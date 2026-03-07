@@ -1,0 +1,19 @@
+{
+  "PolicyNFT": "0x5Cb89e53ECd7aAe6317977Fd332f4b9B32449969",
+  "PolicyVault": "0xb0BE55CD1507709e5B6aae01C0Df2553f6C87523",
+  "CREReceiver": "0x7c7Adfc342199beB302f99debCb8F3A5544853D9",
+  "network": "sepolia",
+  "chainId": 11155111,
+  "deployer": "0x15d265Dc32a575755ACA19b5EcEAB8018CdD26F1",
+  "USDC": "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+  "CREForwarder": "0x15fC6ae953E024d975e77382eEeC56A9101f9F88",
+  "minReserveBps": 11000,
+  "nftName": "Event Policy",
+  "nftSymbol": "EPOL",
+  "updatedAt": "2026-03-03T05:46:00.414Z",
+  "lastFundTxHash": "0xcb8363de8f6ecf49e36182fc1ca3ce73bf59c022698308d4293dbe4b42a72d5f",
+  "lastFundAmountUSDC": "20",
+  "lastFundedBy": "0x15d265Dc32a575755ACA19b5EcEAB8018CdD26F1",
+  "lastFundedAt": "2026-03-03T05:46:00.413Z",
+  "vaultUSDCBalance": "40.0"
+}
