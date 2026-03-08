@@ -24,7 +24,8 @@ export const handleClaim = async (
 ): Promise<WorkflowResult> => {
   try {
     const receiver = mustHexAddress(config.receiver, "receiver");
-    const policyId = BigInt(input.policyId);
+    const policyId = BigInt(input.policyId.trim());
+    const submittedEventId = input.eventId.trim();
     const receiverReadData = encodeFunctionData({
       abi: CREReceiverABI,
       functionName: "policyNft",
@@ -67,10 +68,45 @@ export const handleClaim = async (
       functionName: "getPolicy",
       data: bytesToHex(policyRead.data),
     });
-    const canonicalEventId = policy.eventId;
-    if (canonicalEventId !== input.eventId) return { ok: false, error: "EVENT_ID_MISMATCH" };
+    const canonicalEventId = typeof policy.eventId === "string" ? policy.eventId.trim() : "";
+    if (canonicalEventId.length === 0) return { ok: false, error: "POLICY_NOT_FOUND_OR_NOT_MINTED" };
+    if (canonicalEventId !== submittedEventId) return { ok: false, error: "EVENT_ID_MISMATCH" };
 
-    const event = fetchEventbriteEvent(runtime, httpClient, canonicalEventId, config);
+    // Guard duplicate settlement attempts before any offchain/API work.
+    // PolicyNFT status enum: NONE=0, ACTIVE=1, PAID=2, RESOLVED_NO_PAYOUT=3
+    const policyStatus = typeof policy.status === "number" ? policy.status : Number(policy.status);
+    if (policyStatus === 2) {
+      return {
+        ok: true,
+        action: "CLAIM",
+        decision: "PAY",
+        note: "Policy already paid. No new settlement transaction submitted.",
+        event: { eventId: canonicalEventId },
+      };
+    }
+    if (policyStatus === 3) {
+      return {
+        ok: true,
+        action: "CLAIM",
+        decision: "RESOLVE_NO_PAYOUT",
+        note: "Policy already resolved with no payout. No new settlement transaction submitted.",
+        event: { eventId: canonicalEventId },
+      };
+    }
+    if (policyStatus !== 1) {
+      return { ok: false, error: "POLICY_NOT_ACTIVE" };
+    }
+
+    const claimEventbriteApiBaseUrl =
+      typeof config.claimEventbriteApiBaseUrl === "string" && config.claimEventbriteApiBaseUrl.trim().length > 0
+        ? config.claimEventbriteApiBaseUrl
+        : undefined;
+    if (claimEventbriteApiBaseUrl) {
+      runtime.log(`[CLAIM] using claim Eventbrite base URL override: ${claimEventbriteApiBaseUrl}`);
+    }
+    const event = fetchEventbriteEvent(runtime, httpClient, canonicalEventId, config, {
+      baseUrl: claimEventbriteApiBaseUrl,
+    });
 
     const tNow = nowSec(runtime);
     const policyCoverageEndSec =

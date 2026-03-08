@@ -10,10 +10,10 @@
   "PolicyNFT": "0xDe2E4b017A0c453Ef527519701DaD32ed164c5E7",
   "PolicyVault": "0x959d812153a2c80178478e518f4E3033a467B62D",
   "CREReceiver": "0xF0e47056A1ab670F11Ae066F1661952f5ae35d1d",
-  "updatedAt": "2026-03-05T07:13:26.251Z",
-  "lastFundTxHash": "0x19fe52e5740dbc0ff6fbf0299fd8703bd5938084371083acd2ee54303739455a",
+  "updatedAt": "2026-03-07T20:21:58.861Z",
+  "lastFundTxHash": "0x6d2392d5eb1eeaeacfcbf43a680ed5061b8ff1594a5985c415158c51c9c329d1",
   "lastFundAmountUSDC": "20",
   "lastFundedBy": "0x15d265Dc32a575755ACA19b5EcEAB8018CdD26F1",
-  "lastFundedAt": "2026-03-05T07:13:26.251Z",
-  "vaultUSDCBalance": "40.0"
+  "lastFundedAt": "2026-03-07T20:21:58.861Z",
+  "vaultUSDCBalance": "90.05"
 }

@@ -1,6 +1,6 @@
 {
   "action": "QUOTE_CHECK",
   "eventUrl": "https://www.eventbrite.com/e/new-york-city-career-fair-tickets-497852368837?aff=ebdssbneighborhoodbrowse",
-  "eventName": "New York City Career Fair",
-  "insured": "0x1234"
+  "insured": "0x1234",
+  "tier": "MEDIUM"
 }

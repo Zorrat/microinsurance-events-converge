@@ -12,6 +12,18 @@
   gap: 0.96rem;
 }
 
+.stageExpanded {
+  border-color: rgba(143, 187, 210, 0.4);
+}
+
+.stageCollapsed {
+  border-color: rgba(143, 187, 210, 0.24);
+  background:
+    radial-gradient(220px 130px at 88% 0%, rgba(92, 172, 208, 0.08), transparent 72%),
+    linear-gradient(180deg, rgba(8, 20, 30, 0.78), rgba(7, 16, 24, 0.72));
+  gap: 0.78rem;
+}
+
 .stageHeader {
   display: grid;
   gap: 0.62rem;
@@ -71,6 +83,30 @@
   gap: 0.9rem;
 }
 
+.stageCompactFooter {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.stageOpenButton {
+  border: 1px solid rgba(151, 204, 230, 0.52);
+  border-radius: 10px;
+  background: rgba(12, 28, 40, 0.9);
+  color: #d7edfb;
+  font-family: var(--coverfi-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.46rem 0.74rem;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.stageOpenButton:hover {
+  border-color: rgba(151, 204, 230, 0.72);
+  background: rgba(16, 39, 55, 0.9);
+}
+
 .explanationBox {
   border: 1px solid rgba(132, 182, 208, 0.28);
   border-radius: 12px;
@@ -124,45 +160,6 @@
   color: rgba(151, 215, 242, 0.88);
 }
 
-.previewPanel {
-  border: 1px solid rgba(144, 191, 215, 0.34);
-  border-radius: 14px;
-  background: rgba(11, 23, 35, 0.8);
-  padding: 0.85rem;
-  display: grid;
-  gap: 0.62rem;
-}
-
-.panelHeading {
-  margin: 0;
-  color: #dff2fb;
-  font-size: 0.87rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.metaLine {
-  margin: 0;
-  color: #b1c8d7;
-  font-size: 0.84rem;
-  line-height: 1.54;
-}
-
-.errorLine {
-  margin: 0;
-  color: #ffb4b4;
-  font-size: 0.82rem;
-}
-
-.actionButton {
-  width: fit-content;
-  border-color: rgba(144, 198, 224, 0.56);
-  background: rgba(245, 252, 255, 0.95);
-  color: #0d1d2b;
-  font-size: 0.83rem;
-  letter-spacing: 0.01em;
-}
-
 .resultPanel {
   border: 1px solid rgba(129, 173, 198, 0.34);
   border-radius: 13px;
@@ -193,10 +190,6 @@
 @media (max-width: 640px) {
   .stage {
     padding: 0.82rem;
-  }
-
-  .previewPanel {
-    padding: 0.66rem;
   }
 
   .resultBody {

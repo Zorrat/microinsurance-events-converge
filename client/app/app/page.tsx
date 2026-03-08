@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
@@ -9,17 +9,21 @@ import { formatUnits } from "viem";
 import { useAccount, usePublicClient } from "wagmi";
 
 import { ExplanationBox } from "@/app/components/workflow/explanation-box";
-import { PaymentPreviewPanel } from "@/app/components/workflow/payment-preview-panel";
 import { ResultPanel } from "@/app/components/workflow/result-panel";
 import { WorkflowStageCard } from "@/app/components/workflow/workflow-stage-card";
 import type {
   ClaimWorkflowOk,
   MintWorkflowOk,
+  PolicyTier,
   QuoteWorkflowOk,
   WorkflowError,
 } from "@/app/lib/cre-types";
 import { config } from "@/app/lib/config";
-import { WORKFLOW_STAGE_CONTENT } from "@/app/lib/workflow-content";
+import {
+  WORKFLOW_STAGE_CONTENT,
+  WORKFLOW_STAGE_ORDER,
+  type WorkflowStageKey,
+} from "@/app/lib/workflow-content";
 import { usePaidFetch } from "@/app/lib/usePaidFetch";
 import { useQuoteCache } from "@/app/lib/useQuoteCache";
 import { workflowResultSchema } from "@/app/lib/validation";
@@ -30,7 +34,6 @@ import styles from "@/app/app/page.module.css";
 type QuoteRouteResponse = QuoteWorkflowOk | WorkflowError;
 type BuyRouteResponse = MintWorkflowOk | WorkflowError;
 type ClaimRouteResponse = ClaimWorkflowOk | WorkflowError;
-type PreviewKey = "quote" | "buy" | "claim";
 
 type PaymentProof = {
   rawHeader: string;
@@ -40,22 +43,18 @@ type PaymentProof = {
   decodeError?: string;
 };
 
-type PaymentPreview = {
-  endpoint: string;
-  status: number;
-  network?: string;
-  payTo?: string;
-  asset?: string;
-  amount?: string;
-  amountDisplay?: string;
-  description?: string;
-  error?: string;
-};
+type NftImportStatus = "idle" | "success" | "failed" | "unavailable";
 
 type WalletPolicy = {
   policyId: string;
   eventId: string;
   status: number;
+  payoutUSDC: string;
+  premiumUSDC: string;
+  coverageStart: number;
+  coverageEnd: number;
+  quoteExpiry: number;
+  insured: string;
 };
 
 const CRE_UI_WORKFLOWS_URL = "https://cre.chain.link/workflows";
@@ -106,8 +105,36 @@ const POLICY_NFT_ABI = [
 const toStatusLabel = (status: number): string => {
   if (status === 1) return "ACTIVE";
   if (status === 2) return "PAID";
-  if (status === 3) return "RESOLVED";
+  if (status === 3) return "RESOLVED_NO_PAYOUT";
   return "UNKNOWN";
+};
+
+const toNumberishString = (value: unknown): string => {
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value).toString();
+  if (typeof value === "string") return value;
+  return "0";
+};
+
+const toNumberishNumber = (value: unknown): number => {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "string" && /^\d+$/.test(value)) return Number(value);
+  return 0;
+};
+
+const formatUsdcAmount = (baseAmount: string): string => {
+  if (!/^\d+$/.test(baseAmount)) return baseAmount || "N/A";
+  try {
+    return `${formatUnits(BigInt(baseAmount), 6)} USDC`;
+  } catch {
+    return `${baseAmount} base units`;
+  }
+};
+
+const formatUnixSeconds = (seconds: number): string => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "N/A";
+  return new Date(seconds * 1000).toLocaleString();
 };
 
 const asErrorMessage = (error: unknown): string => {
@@ -137,21 +164,6 @@ const parsePaymentProof = (response: Response): PaymentProof | null => {
       decodeError: asErrorMessage(error),
     };
   }
-};
-
-const formatPaymentAmount = (asset?: string, amount?: string): string | undefined => {
-  if (!asset || !amount) return undefined;
-  if (!/^\d+$/.test(amount)) return `${amount} ${asset}`;
-
-  if (asset.toLowerCase() === config.usdc.toLowerCase()) {
-    try {
-      return `${formatUnits(BigInt(amount), 6)} USDC`;
-    } catch {
-      return `${amount} USDC base units`;
-    }
-  }
-
-  return `${amount} base units`;
 };
 
 const readPaymentRequiredFromResponse = async (response: Response): Promise<unknown | null> => {
@@ -231,6 +243,27 @@ const normalizeWorkflowResult = (
   return parsed.data;
 };
 
+const claimDecisionCopy = (
+  decision: ClaimWorkflowOk["decision"],
+): { title: string; description: string } => {
+  if (decision === "PAY") {
+    return {
+      title: "Claim approved for payout",
+      description: "Cancellation conditions were met and payout settlement has been submitted.",
+    };
+  }
+  if (decision === "RESOLVE_NO_PAYOUT") {
+    return {
+      title: "Claim resolved without payout",
+      description: "The policy was closed with no payout based on event and policy conditions.",
+    };
+  }
+  return {
+    title: "Claim pending",
+    description: "No settlement yet. Retry later after the event status changes.",
+  };
+};
+
 export default function WorkflowDemoPage() {
   const { isConnected, chainId, address } = useAccount();
   const publicClient = usePublicClient({ chainId: config.chainId });
@@ -241,8 +274,11 @@ export default function WorkflowDemoPage() {
   const [eventUrl, setEventUrl] = useState(
     "https://www.eventbrite.com/e/jay-jay-present-big-apple-brunch-day-party-each-n-every-sunday-tickets-896748186967",
   );
-  const [eventName, setEventName] = useState("Jay Jay Present Big Apple Brunch & Day Party Each n Every Sunday");
-  const [insured, setInsured] = useState("0x5125E6b78b5Cf53248EcB5A22Ce539341FE90Cd8");
+  const [insured, setInsured] = useState<string>(() => address ?? "");
+  const [insuredOverridden, setInsuredOverridden] = useState(false);
+  const [nonce, setNonce] = useState("");
+  const [tier, setTier] = useState<PolicyTier>("MEDIUM");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [policyId, setPolicyId] = useState("");
   const [claimEventId, setClaimEventId] = useState("");
@@ -258,18 +294,16 @@ export default function WorkflowDemoPage() {
   const [quotePaymentProof, setQuotePaymentProof] = useState<PaymentProof | null>(null);
   const [buyPaymentProof, setBuyPaymentProof] = useState<PaymentProof | null>(null);
   const [claimPaymentProof, setClaimPaymentProof] = useState<PaymentProof | null>(null);
-  const [paymentPreviews, setPaymentPreviews] = useState<Record<PreviewKey, PaymentPreview | null>>({
-    quote: null,
-    buy: null,
-    claim: null,
-  });
+  const [nftImportStatus, setNftImportStatus] = useState<NftImportStatus>("idle");
+  const [nftImportMessage, setNftImportMessage] = useState("");
 
   const [loading, setLoading] = useState<"quote" | "buy" | "claim" | null>(null);
-  const [previewLoading, setPreviewLoading] = useState<PreviewKey | null>(null);
   const [walletPolicies, setWalletPolicies] = useState<WalletPolicy[]>([]);
   const [walletPoliciesLoading, setWalletPoliciesLoading] = useState(false);
   const [walletPoliciesError, setWalletPoliciesError] = useState<string | null>(null);
   const [walletPoliciesTruncated, setWalletPoliciesTruncated] = useState(false);
+
+  const [activeStage, setActiveStage] = useState<WorkflowStageKey>("quote");
 
   const quoteSigned =
     quoteResponse && quoteResponse.ok && quoteResponse.action === "QUOTE_CHECK"
@@ -278,15 +312,14 @@ export default function WorkflowDemoPage() {
 
   const canBuy = Boolean(
     quoteResponse &&
-    quoteResponse.ok &&
-    quoteResponse.action === "QUOTE_CHECK" &&
-    quoteResponse.quoteValid &&
-    quoteSigned,
+      quoteResponse.ok &&
+      quoteResponse.action === "QUOTE_CHECK" &&
+      quoteResponse.quoteValid &&
+      quoteSigned,
   );
 
   const isWrongNetwork = isConnected && chainId !== config.chainId;
 
-  // Check cached quotes for current wallet
   const cachedQuotes = useMemo(() => {
     if (!address) return [];
     return getAllCachedQuotes(address);
@@ -295,6 +328,11 @@ export default function WorkflowDemoPage() {
   useEffect(() => {
     setHasMetaMaskProvider(Boolean(getMetaMaskProvider()));
   }, []);
+
+  useEffect(() => {
+    if (insuredOverridden) return;
+    setInsured(address ?? "");
+  }, [address, insuredOverridden]);
 
   const readinessError = useMemo(() => {
     if (hasMetaMaskProvider === null) return "Checking wallet provider...";
@@ -308,19 +346,61 @@ export default function WorkflowDemoPage() {
   const quoteAcceptedExecutionId = extractAcceptedExecutionId(quoteResponse);
   const buyAcceptedExecutionId = extractAcceptedExecutionId(buyResponse);
   const claimAcceptedExecutionId = extractAcceptedExecutionId(claimResponse);
-  const quotePreview = paymentPreviews.quote;
-  const buyPreview = paymentPreviews.buy;
-  const claimPreview = paymentPreviews.claim;
 
   const quoteStage = WORKFLOW_STAGE_CONTENT.quote;
   const buyStage = WORKFLOW_STAGE_CONTENT.buy;
   const claimStage = WORKFLOW_STAGE_CONTENT.claim;
-  const stageRail = [quoteStage, buyStage, claimStage] as const;
+
   const stageCompleted = {
     quote: Boolean(quoteResponse && quoteResponse.ok && quoteResponse.action === "QUOTE_CHECK"),
     buy: Boolean(buyResponse && buyResponse.ok && buyResponse.action === "MINT"),
     claim: Boolean(claimResponse && claimResponse.ok && claimResponse.action === "CLAIM"),
   } as const;
+
+  const derivedCurrentStage = useMemo<WorkflowStageKey>(() => {
+    if (!stageCompleted.quote) return "quote";
+    if (!stageCompleted.buy) return "buy";
+    return "claim";
+  }, [stageCompleted.buy, stageCompleted.quote]);
+
+  useEffect(() => {
+    const rank: Record<WorkflowStageKey, number> = {
+      quote: 0,
+      buy: 1,
+      claim: 2,
+    };
+
+    setActiveStage((current) =>
+      rank[derivedCurrentStage] > rank[current] ? derivedCurrentStage : current,
+    );
+  }, [derivedCurrentStage]);
+
+  const currentStepBannerText =
+    derivedCurrentStage === "quote"
+      ? "Step 1 of 3: request a quote"
+      : derivedCurrentStage === "buy"
+        ? "Step 2 of 3: mint coverage"
+        : "Step 3 of 3: submit claim";
+
+  const quotePayload = useMemo(() => {
+    const payload: {
+      eventUrl: string;
+      insured: string;
+      tier: PolicyTier;
+      nonce?: `0x${string}`;
+    } = {
+      eventUrl,
+      insured,
+      tier,
+    };
+
+    const trimmedNonce = nonce.trim();
+    if (trimmedNonce.length > 0) {
+      payload.nonce = trimmedNonce as `0x${string}`;
+    }
+
+    return payload;
+  }, [eventUrl, insured, tier, nonce]);
 
   const postPaid = async <T,>(
     url: string,
@@ -358,194 +438,7 @@ export default function WorkflowDemoPage() {
     };
   };
 
-  const loadPaymentPreview = async (
-    key: PreviewKey,
-    url: string,
-    payload: unknown,
-  ): Promise<PaymentPreview> => {
-    setPreviewLoading(key);
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const paymentRequired = await readPaymentRequiredFromResponse(response);
-      const asRecord =
-        paymentRequired && typeof paymentRequired === "object"
-          ? (paymentRequired as Record<string, unknown>)
-          : null;
-      const accepts = Array.isArray(asRecord?.accepts)
-        ? (asRecord.accepts as Array<Record<string, unknown>>)
-        : [];
-      const first = accepts[0];
-
-      let preview: PaymentPreview;
-      if (!first) {
-        preview = {
-          endpoint: url,
-          status: response.status,
-          error: `No x402 challenge payload found (status ${response.status}).`,
-        };
-      } else {
-        const asset = typeof first.asset === "string" ? first.asset : undefined;
-        const amount =
-          typeof first.amount === "string"
-            ? first.amount
-            : typeof first.maxAmountRequired === "string"
-              ? first.maxAmountRequired
-              : undefined;
-        const resource =
-          asRecord?.resource && typeof asRecord.resource === "object"
-            ? (asRecord.resource as Record<string, unknown>)
-            : null;
-
-        preview = {
-          endpoint: url,
-          status: response.status,
-          network: typeof first.network === "string" ? first.network : undefined,
-          payTo: typeof first.payTo === "string" ? first.payTo : undefined,
-          asset,
-          amount,
-          amountDisplay: formatPaymentAmount(asset, amount),
-          description: typeof resource?.description === "string" ? resource.description : undefined,
-        };
-      }
-
-      setPaymentPreviews((prev) => ({ ...prev, [key]: preview }));
-      return preview;
-    } catch (error) {
-      const preview: PaymentPreview = {
-        endpoint: url,
-        status: 0,
-        error: `Failed to load preview: ${asErrorMessage(error)}`,
-      };
-      setPaymentPreviews((prev) => ({ ...prev, [key]: preview }));
-      return preview;
-    } finally {
-      setPreviewLoading((current) => (current === key ? null : current));
-    }
-  };
-
-  const onQuote = async () => {
-    const quotePayload = {
-      eventUrl,
-      eventName,
-      insured,
-    };
-
-    setLoading("quote");
-    setQuoteResponse(null);
-    setBuyResponse(null);
-    setClaimResponse(null);
-    setQuoteRaw("");
-    setBuyRaw("");
-    setClaimRaw("");
-    setQuotePaymentProof(null);
-    setBuyPaymentProof(null);
-    setClaimPaymentProof(null);
-
-    try {
-      if (!paymentPreviews.quote) {
-        await loadPaymentPreview("quote", "/api/quote", quotePayload);
-      }
-
-      const { data, raw, paymentProof } = await postPaid<QuoteRouteResponse>("/api/quote", quotePayload);
-
-      setQuoteResponse(data);
-      setQuoteRaw(raw);
-      setQuotePaymentProof(paymentProof);
-
-      if (data.ok && data.action === "QUOTE_CHECK") {
-        const canonicalId = data.canonicalEventId || data.signedQuote?.quote.eventId || "";
-        if (canonicalId) setClaimEventId(canonicalId);
-
-        // Cache the signed quote for this wallet
-        if (address && data.signedQuote) {
-          cacheQuote(address, data.signedQuote);
-        }
-      }
-    } catch (error) {
-      const fallback = { ok: false, error: asErrorMessage(error) } as WorkflowError;
-      setQuoteResponse(fallback);
-      setQuoteRaw(JSON.stringify(fallback, null, 2));
-      setQuotePaymentProof(null);
-    } finally {
-      setLoading(null);
-    }
-  };
-
-  const onBuy = async () => {
-    if (!quoteSigned) return;
-    const buyPayload = {
-      signedQuote: quoteSigned,
-    };
-
-    setLoading("buy");
-    setBuyResponse(null);
-    setClaimResponse(null);
-    setBuyRaw("");
-    setClaimRaw("");
-    setBuyPaymentProof(null);
-    setClaimPaymentProof(null);
-
-    try {
-      if (!paymentPreviews.buy) {
-        await loadPaymentPreview("buy", "/api/buy", buyPayload);
-      }
-
-      const { data, raw, paymentProof } = await postPaid<BuyRouteResponse>("/api/buy", buyPayload);
-
-      setBuyResponse(data);
-      setBuyRaw(raw);
-      setBuyPaymentProof(paymentProof);
-
-      if (data.ok && data.action === "MINT" && data.policyId) {
-        setPolicyId(data.policyId);
-      }
-    } catch (error) {
-      const fallback = { ok: false, error: asErrorMessage(error) } as WorkflowError;
-      setBuyResponse(fallback);
-      setBuyRaw(JSON.stringify(fallback, null, 2));
-      setBuyPaymentProof(null);
-    } finally {
-      setLoading(null);
-    }
-  };
-
-  const onClaim = async () => {
-    const claimPayload = {
-      policyId,
-      eventId: claimEventId,
-    };
-
-    setLoading("claim");
-    setClaimResponse(null);
-    setClaimRaw("");
-    setClaimPaymentProof(null);
-
-    try {
-      if (!paymentPreviews.claim) {
-        await loadPaymentPreview("claim", "/api/claim", claimPayload);
-      }
-
-      const { data, raw, paymentProof } = await postPaid<ClaimRouteResponse>("/api/claim", claimPayload);
-
-      setClaimResponse(data);
-      setClaimRaw(raw);
-      setClaimPaymentProof(paymentProof);
-    } catch (error) {
-      const fallback = { ok: false, error: asErrorMessage(error) } as WorkflowError;
-      setClaimResponse(fallback);
-      setClaimRaw(JSON.stringify(fallback, null, 2));
-      setClaimPaymentProof(null);
-    } finally {
-      setLoading(null);
-    }
-  };
-
-  const loadWalletPolicies = async () => {
+  const loadWalletPolicies = useCallback(async () => {
     if (!address) {
       setWalletPolicies([]);
       setWalletPoliciesError("Connect MetaMask to detect policy NFTs.");
@@ -624,13 +517,27 @@ export default function WorkflowDemoPage() {
         for (let i = 0; i < ownedIds.length; i += 1) {
           const result = policyResults[i];
           if (!result || result.status !== "success") continue;
-          const policy = result.result as { eventId?: unknown; status?: unknown } | undefined;
-          const eventId = typeof policy?.eventId === "string" ? policy.eventId : "";
-          const statusNum = Number(policy?.status ?? 0);
+          const policy = result.result as {
+            eventId?: unknown;
+            status?: unknown;
+            payoutUSDC?: unknown;
+            premiumUSDC?: unknown;
+            coverageStart?: unknown;
+            coverageEnd?: unknown;
+            quoteExpiry?: unknown;
+            insured?: unknown;
+          } | undefined;
+
           found.push({
             policyId: ownedIds[i].toString(),
-            eventId,
-            status: Number.isFinite(statusNum) ? statusNum : 0,
+            eventId: typeof policy?.eventId === "string" ? policy.eventId : "",
+            status: toNumberishNumber(policy?.status),
+            payoutUSDC: toNumberishString(policy?.payoutUSDC),
+            premiumUSDC: toNumberishString(policy?.premiumUSDC),
+            coverageStart: toNumberishNumber(policy?.coverageStart),
+            coverageEnd: toNumberishNumber(policy?.coverageEnd),
+            quoteExpiry: toNumberishNumber(policy?.quoteExpiry),
+            insured: typeof policy?.insured === "string" ? policy.insured : "",
           });
         }
       }
@@ -640,13 +547,13 @@ export default function WorkflowDemoPage() {
 
       if (found.length > 0) {
         const selected =
+          found.find((item) => item.policyId === policyId) ||
           found.find((item) => item.status === 1) ||
           found.find((item) => item.eventId.length > 0) ||
           found[0];
-        if (selected) {
-          setPolicyId(selected.policyId);
-          if (selected.eventId) setClaimEventId(selected.eventId);
-        }
+
+        setPolicyId(selected.policyId);
+        if (selected.eventId) setClaimEventId(selected.eventId);
       }
     } catch (error) {
       setWalletPolicies([]);
@@ -654,11 +561,209 @@ export default function WorkflowDemoPage() {
     } finally {
       setWalletPoliciesLoading(false);
     }
+  }, [address, isWrongNetwork, policyId, publicClient]);
+
+  const walletReadyForDetection = Boolean(
+    address &&
+      !isWrongNetwork &&
+      publicClient &&
+      /^0x[0-9a-fA-F]{40}$/.test(config.policyNft),
+  );
+
+  useEffect(() => {
+    if (!walletReadyForDetection) return;
+    void loadWalletPolicies();
+  }, [walletReadyForDetection, loadWalletPolicies]);
+
+  const onQuote = async () => {
+    setLoading("quote");
+    setQuoteResponse(null);
+    setBuyResponse(null);
+    setClaimResponse(null);
+    setQuoteRaw("");
+    setBuyRaw("");
+    setClaimRaw("");
+    setQuotePaymentProof(null);
+    setBuyPaymentProof(null);
+    setClaimPaymentProof(null);
+    setNftImportStatus("idle");
+    setNftImportMessage("");
+
+    try {
+      const { data, raw, paymentProof } = await postPaid<QuoteRouteResponse>("/api/quote", quotePayload);
+
+      setQuoteResponse(data);
+      setQuoteRaw(raw);
+      setQuotePaymentProof(paymentProof);
+
+      if (data.ok && data.action === "QUOTE_CHECK") {
+        const canonicalId = data.canonicalEventId || data.signedQuote?.quote.eventId || "";
+        if (canonicalId) setClaimEventId(canonicalId);
+
+        if (address && data.signedQuote) {
+          cacheQuote(address, data.signedQuote);
+        }
+      }
+    } catch (error) {
+      const fallback = { ok: false, error: asErrorMessage(error) } as WorkflowError;
+      setQuoteResponse(fallback);
+      setQuoteRaw(JSON.stringify(fallback, null, 2));
+      setQuotePaymentProof(null);
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const onBuy = async () => {
+    if (!quoteSigned) return;
+    const buyPayload = {
+      signedQuote: quoteSigned,
+    };
+
+    setLoading("buy");
+    setBuyResponse(null);
+    setClaimResponse(null);
+    setBuyRaw("");
+    setClaimRaw("");
+    setBuyPaymentProof(null);
+    setClaimPaymentProof(null);
+    setNftImportStatus("idle");
+    setNftImportMessage("");
+
+    try {
+      const { data, raw, paymentProof } = await postPaid<BuyRouteResponse>("/api/buy", buyPayload);
+
+      setBuyResponse(data);
+      setBuyRaw(raw);
+      setBuyPaymentProof(paymentProof);
+
+      if (data.ok && data.action === "MINT") {
+        if (data.policyId) setPolicyId(data.policyId);
+        void loadWalletPolicies();
+      }
+    } catch (error) {
+      const fallback = { ok: false, error: asErrorMessage(error) } as WorkflowError;
+      setBuyResponse(fallback);
+      setBuyRaw(JSON.stringify(fallback, null, 2));
+      setBuyPaymentProof(null);
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const onClaim = async () => {
+    const normalizedPolicyId = policyId.trim();
+    const canonicalClaimEventId =
+      selectedWalletPolicy?.eventId && selectedWalletPolicy.eventId.trim().length > 0
+        ? selectedWalletPolicy.eventId.trim()
+        : claimEventId.trim();
+    if (selectedWalletPolicy?.eventId && selectedWalletPolicy.eventId !== claimEventId) {
+      setClaimEventId(selectedWalletPolicy.eventId);
+    }
+
+    const claimPayload = {
+      policyId: normalizedPolicyId,
+      eventId: canonicalClaimEventId,
+    };
+
+    setLoading("claim");
+    setClaimResponse(null);
+    setClaimRaw("");
+    setClaimPaymentProof(null);
+
+    try {
+      const { data, raw, paymentProof } = await postPaid<ClaimRouteResponse>("/api/claim", claimPayload);
+
+      setClaimResponse(data);
+      setClaimRaw(raw);
+      setClaimPaymentProof(paymentProof);
+    } catch (error) {
+      const fallback = { ok: false, error: asErrorMessage(error) } as WorkflowError;
+      setClaimResponse(fallback);
+      setClaimRaw(JSON.stringify(fallback, null, 2));
+      setClaimPaymentProof(null);
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const selectedWalletPolicy = useMemo(
+    () => walletPolicies.find((item) => item.policyId === policyId) ?? null,
+    [walletPolicies, policyId],
+  );
+
+  const selectedStatusLabel = selectedWalletPolicy
+    ? toStatusLabel(selectedWalletPolicy.status)
+    : "N/A";
+
+  const quotePremiumBase =
+    quoteResponse?.ok && quoteResponse.action === "QUOTE_CHECK"
+      ? quoteResponse.signedQuote?.quote.premiumUSDC ?? quoteResponse.pricing?.premiumUSDC
+      : undefined;
+  const quotePayoutBase =
+    quoteResponse?.ok && quoteResponse.action === "QUOTE_CHECK"
+      ? quoteResponse.signedQuote?.quote.payoutUSDC ?? quoteResponse.pricing?.payoutUSDC
+      : undefined;
+
+  const mintedPolicyId =
+    buyResponse?.ok && buyResponse.action === "MINT" ? (buyResponse.policyId ?? "N/A") : null;
+  const mintedTokenId =
+    buyResponse?.ok && buyResponse.action === "MINT"
+      ? (buyResponse.tokenId ?? buyResponse.policyId ?? "")
+      : "";
+  const mintedPolicyNftAddress =
+    buyResponse?.ok && buyResponse.action === "MINT"
+      ? (buyResponse.policyNftAddress ?? config.policyNft ?? "")
+      : "";
+  const canImportMintedNft = Boolean(
+    mintedTokenId && /^0x[0-9a-fA-F]{40}$/.test(mintedPolicyNftAddress) && hasMetaMaskProvider,
+  );
+
+  const onImportMintedNft = async () => {
+    if (!mintedTokenId || !/^0x[0-9a-fA-F]{40}$/.test(mintedPolicyNftAddress)) {
+      setNftImportStatus("unavailable");
+      setNftImportMessage("Policy NFT address or token ID is not available yet.");
+      return;
+    }
+
+    const provider = getMetaMaskProvider();
+    if (!provider) {
+      setNftImportStatus("unavailable");
+      setNftImportMessage("MetaMask provider is not available in this browser session.");
+      return;
+    }
+
+    try {
+      const requestProvider = provider as {
+        request: (args: { method: string; params?: unknown }) => Promise<unknown>;
+      };
+      const result = await requestProvider.request({
+        method: "wallet_watchAsset",
+        params: {
+          type: "ERC721",
+          options: {
+            address: mintedPolicyNftAddress,
+            tokenId: mintedTokenId,
+          },
+        },
+      });
+
+      if (result === true) {
+        setNftImportStatus("success");
+        setNftImportMessage("NFT import request sent to MetaMask.");
+        return;
+      }
+
+      setNftImportStatus("failed");
+      setNftImportMessage("MetaMask did not confirm NFT import.");
+    } catch (error) {
+      setNftImportStatus("failed");
+      setNftImportMessage(`Failed to import NFT: ${asErrorMessage(error)}`);
+    }
   };
 
   return (
     <main className={styles.page}>
-      {/* ─── Header ─── */}
       <section className={`${styles.glassPanel} ${styles.headerPanel}`}>
         <div className={styles.headerBlock}>
           <h1 className={styles.pageTitle}>CoverFi</h1>
@@ -669,51 +774,130 @@ export default function WorkflowDemoPage() {
         <ConnectButton />
       </section>
 
-      {/* ─── Wallet Status ─── */}
       <section className={`${styles.glassPanel} ${styles.statusPanel}`}>
         <p className={`${styles.statusMessage} ${readinessError ? styles.statusError : styles.statusOk}`}>
           {readinessError || "Wallet connected and ready."}
         </p>
       </section>
 
-      {/* ─── Stepper ─── */}
       <section className={`${styles.glassPanel} ${styles.flowRailPanel}`}>
         <p className={styles.flowRailLabel}>Workflow Stages</p>
         <div className={styles.flowRail}>
-          {stageRail.map((stage) => (
-            <article
-              key={stage.key}
-              className={`${styles.flowNode} ${stageCompleted[stage.key] ? styles.flowNodeDone : ""}`.trim()}
-            >
-              <div className={styles.flowNodeHead}>
-                <span className={styles.flowNodeIndex}>{String(stage.order).padStart(2, "0")}</span>
-                <h2 className={styles.flowNodeTitle}>{stage.navTitle}</h2>
-              </div>
-              <p className={styles.flowNodeSummary}>{stage.consoleSummary}</p>
-            </article>
-          ))}
+          {WORKFLOW_STAGE_ORDER.map((key) => {
+            const stage = WORKFLOW_STAGE_CONTENT[key];
+            const isActive = activeStage === key;
+            return (
+              <article
+                key={stage.key}
+                className={[
+                  styles.flowNode,
+                  stageCompleted[stage.key] ? styles.flowNodeDone : "",
+                  isActive ? styles.flowNodeActive : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
+                <div className={styles.flowNodeHead}>
+                  <span className={styles.flowNodeIndex}>{String(stage.order).padStart(2, "0")}</span>
+                  <h2 className={styles.flowNodeTitle}>{stage.navTitle}</h2>
+                </div>
+                <p className={styles.flowNodeSummary}>{stage.consoleSummary}</p>
+              </article>
+            );
+          })}
         </div>
       </section>
 
-      {/* ─── Two-Column Layout ─── */}
       <div className={styles.twoColumnLayout}>
-        {/* ─── LEFT: User Actions ─── */}
         <div className={styles.userPanel}>
-          {/* Cached Quotes Banner */}
-          {cachedQuotes.length > 0 && (
+          <div className={styles.currentStepBanner}>
+            <p className={styles.currentStepLabel}>Current step</p>
+            <p className={styles.currentStepValue}>{currentStepBannerText}</p>
+            <button
+              type="button"
+              className={styles.advancedToggle}
+              onClick={() => setShowAdvanced((current) => !current)}
+            >
+              {showAdvanced ? "Hide advanced fields" : "Show advanced fields"}
+            </button>
+          </div>
+
+          {cachedQuotes.length > 0 ? (
             <div className={styles.cachedBanner}>
               <span className={styles.cachedDot} />
               {cachedQuotes.length} cached quote{cachedQuotes.length > 1 ? "s" : ""} · expires in{" "}
               {cachedQuotes[0].minutesLeft} min
             </div>
-          )}
+          ) : null}
 
-          {/* Quote Stage */}
+          {showAdvanced ? (
+            <div className={`${styles.subPanel} ${styles.advancedPanel}`}>
+              <h3 className={styles.subPanelTitle}>Advanced Overrides</h3>
+              <div className={styles.fieldGrid}>
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Insured Address</span>
+                  <input
+                    className={styles.input}
+                    value={insured}
+                    onChange={(event) => {
+                      setInsuredOverridden(true);
+                      setInsured(event.target.value);
+                    }}
+                  />
+                </label>
+
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Quote Nonce (optional bytes32)</span>
+                  <input
+                    className={styles.input}
+                    value={nonce}
+                    placeholder="0x..."
+                    onChange={(event) => setNonce(event.target.value)}
+                  />
+                </label>
+
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Policy ID (manual override)</span>
+                  <input
+                    className={styles.input}
+                    value={policyId}
+                    onChange={(event) => setPolicyId(event.target.value)}
+                  />
+                </label>
+
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Event ID (manual override)</span>
+                  <input
+                    className={styles.input}
+                    value={claimEventId}
+                    onChange={(event) => setClaimEventId(event.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className={styles.actionRow}>
+                <button
+                  type="button"
+                  className={styles.secondaryAction}
+                  onClick={() => {
+                    setInsuredOverridden(false);
+                    setInsured(address ?? "");
+                  }}
+                  disabled={!address}
+                >
+                  Use connected wallet
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <WorkflowStageCard
             step={quoteStage.order}
             title={quoteStage.navTitle}
             summary={quoteStage.consoleSummary}
             chips={quoteStage.explanation.chips}
+            expanded={activeStage === "quote"}
+            onOpenStage={() => setActiveStage("quote")}
           >
             <ExplanationBox
               label={quoteStage.explanation.label}
@@ -722,18 +906,7 @@ export default function WorkflowDemoPage() {
               checks={quoteStage.operatorChecks}
             />
 
-            <PaymentPreviewPanel
-              endpointLabel="POST /api/quote"
-              amountLabel={quotePreview?.amountDisplay || `$${config.x402FixedFeeUsd} USDC`}
-              networkLabel={quotePreview?.network || config.chainCaip2}
-              receiverLabel={quotePreview?.payTo || config.x402PayTo || "Not configured"}
-              assetLabel={quotePreview?.asset}
-              descriptionLabel={quotePreview?.description}
-              errorLabel={quotePreview?.error}
-              onRefresh={() => void loadPaymentPreview("quote", "/api/quote", { eventUrl, eventName, insured })}
-              loading={previewLoading === "quote"}
-              disabled={loading !== null}
-            />
+            <p className={styles.inlineText}>Quote check fee: ${config.x402QuoteFeeUsd} USDC</p>
 
             <div className={styles.fieldGrid}>
               <label className={styles.field}>
@@ -747,18 +920,16 @@ export default function WorkflowDemoPage() {
               </label>
 
               <label className={styles.field}>
-                <span className={styles.fieldLabel}>Event Name</span>
-                <input
+                <span className={styles.fieldLabel}>Policy Tier</span>
+                <select
                   className={styles.input}
-                  value={eventName}
-                  placeholder="Event name..."
-                  onChange={(event) => setEventName(event.target.value)}
-                />
-              </label>
-
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Insured Address</span>
-                <input className={styles.input} value={insured} onChange={(event) => setInsured(event.target.value)} />
+                  value={tier}
+                  onChange={(event) => setTier(event.target.value as PolicyTier)}
+                >
+                  <option value="BASIC">BASIC ($10 payout)</option>
+                  <option value="MEDIUM">MEDIUM ($100 payout)</option>
+                  <option value="ADVANCED">ADVANCED ($1000 payout)</option>
+                </select>
               </label>
             </div>
 
@@ -767,33 +938,44 @@ export default function WorkflowDemoPage() {
                 type="button"
                 className={styles.primaryAction}
                 onClick={onQuote}
-                disabled={Boolean(readinessError) || loading !== null}
+                disabled={Boolean(readinessError) || !insured || loading !== null}
               >
                 {loading === "quote" ? "Requesting quote..." : "Get Quote"}
               </button>
             </div>
 
             {quoteResponse?.ok && quoteResponse.action === "QUOTE_CHECK" ? (
-              <div className={styles.badgeRow}>
-                <span className={`badge ${quoteResponse.quoteValid ? "ok" : "warn"}`}>
-                  {quoteResponse.quoteValid ? "✓ Quote valid" : "✗ Quote invalid"}
-                </span>
-                {quoteResponse.reason ? <span className="badge warn">reason: {quoteResponse.reason}</span> : null}
-                {quoteResponse.warnings?.map((warning) => (
-                  <span key={warning} className="badge warn">
-                    {warning}
-                  </span>
-                ))}
+              <div className={styles.outcomeCard}>
+                <h3 className={styles.subPanelTitle}>Quote Summary</h3>
+                <div className={styles.outcomeGrid}>
+                  <div className={styles.outcomeItem}>
+                    <span className={styles.outcomeLabel}>Approved</span>
+                    <span className={styles.outcomeValue}>{quoteResponse.quoteValid ? "Yes" : "No"}</span>
+                  </div>
+                  <div className={styles.outcomeItem}>
+                    <span className={styles.outcomeLabel}>Premium</span>
+                    <span className={styles.outcomeValue}>
+                      {quotePremiumBase ? formatUsdcAmount(quotePremiumBase) : "N/A"}
+                    </span>
+                  </div>
+                  <div className={styles.outcomeItem}>
+                    <span className={styles.outcomeLabel}>Payout</span>
+                    <span className={styles.outcomeValue}>
+                      {quotePayoutBase ? formatUsdcAmount(quotePayoutBase) : "N/A"}
+                    </span>
+                  </div>
+                </div>
               </div>
             ) : null}
           </WorkflowStageCard>
 
-          {/* Buy Stage */}
           <WorkflowStageCard
             step={buyStage.order}
             title={buyStage.navTitle}
             summary={buyStage.consoleSummary}
             chips={buyStage.explanation.chips}
+            expanded={activeStage === "buy"}
+            onOpenStage={() => setActiveStage("buy")}
           >
             <ExplanationBox
               label={buyStage.explanation.label}
@@ -802,21 +984,7 @@ export default function WorkflowDemoPage() {
               checks={buyStage.operatorChecks}
             />
 
-            <PaymentPreviewPanel
-              endpointLabel="POST /api/buy"
-              amountLabel={buyPreview?.amountDisplay || `$${config.x402FixedFeeUsd} USDC`}
-              networkLabel={buyPreview?.network || config.chainCaip2}
-              receiverLabel={buyPreview?.payTo || config.x402PayTo || "Not configured"}
-              assetLabel={buyPreview?.asset}
-              descriptionLabel={buyPreview?.description}
-              errorLabel={buyPreview?.error}
-              onRefresh={() => {
-                if (!quoteSigned) return;
-                void loadPaymentPreview("buy", "/api/buy", { signedQuote: quoteSigned });
-              }}
-              loading={previewLoading === "buy"}
-              disabled={!quoteSigned || loading !== null}
-            />
+            <p className={styles.inlineText}>Mint fee: ${config.x402BuyFeeUsd} USDC</p>
 
             <div className={styles.actionRow}>
               <button
@@ -830,25 +998,65 @@ export default function WorkflowDemoPage() {
             </div>
 
             {buyResponse?.ok && buyResponse.action === "MINT" ? (
-              <div className={styles.badgeRow}>
-                {buyResponse.policyId ? <span className="badge ok">Policy #{buyResponse.policyId}</span> : null}
-                {buyResponse.txHash ? <span className="badge ok">Tx confirmed</span> : null}
+              <div className={styles.outcomeCard}>
+                <h3 className={styles.subPanelTitle}>Coverage Activated</h3>
+                <div className={styles.outcomeGrid}>
+                  <div className={styles.outcomeItem}>
+                    <span className={styles.outcomeLabel}>Policy ID</span>
+                    <span className={styles.outcomeValue}>{mintedPolicyId}</span>
+                  </div>
+                  <div className={styles.outcomeItem}>
+                    <span className={styles.outcomeLabel}>NFT ID</span>
+                    <span className={styles.outcomeValue}>{mintedTokenId || "N/A"}</span>
+                  </div>
+                </div>
+
+                <div className={styles.actionRow}>
+                  <button
+                    type="button"
+                    className={styles.secondaryAction}
+                    onClick={() => void onImportMintedNft()}
+                    disabled={!canImportMintedNft || loading !== null}
+                  >
+                    Import NFT to Wallet
+                  </button>
+                </div>
+
+                {nftImportStatus !== "idle" && nftImportMessage ? (
+                  <p
+                    className={
+                      nftImportStatus === "success"
+                        ? styles.inlineText
+                        : nftImportStatus === "failed"
+                          ? styles.inlineError
+                          : styles.inlineText
+                    }
+                  >
+                    {nftImportMessage}
+                  </p>
+                ) : null}
               </div>
             ) : null}
 
             {buyResponse?.ok && buyResponse.action === "MINT" && buyResponse.txHash ? (
-              <a className={styles.inlineLink} href={`${config.basescan}/tx/${buyResponse.txHash}`} target="_blank" rel="noreferrer">
+              <a
+                className={styles.inlineLink}
+                href={`${config.basescan}/tx/${buyResponse.txHash}`}
+                target="_blank"
+                rel="noreferrer"
+              >
                 View transaction on Explorer →
               </a>
             ) : null}
           </WorkflowStageCard>
 
-          {/* Claim Stage */}
           <WorkflowStageCard
             step={claimStage.order}
             title={claimStage.navTitle}
             summary={claimStage.consoleSummary}
             chips={claimStage.explanation.chips}
+            expanded={activeStage === "claim"}
+            onOpenStage={() => setActiveStage("claim")}
           >
             <ExplanationBox
               label={claimStage.explanation.label}
@@ -857,79 +1065,64 @@ export default function WorkflowDemoPage() {
               checks={claimStage.operatorChecks}
             />
 
-            <PaymentPreviewPanel
-              endpointLabel="POST /api/claim"
-              amountLabel={claimPreview?.amountDisplay || `$${config.x402FixedFeeUsd} USDC`}
-              networkLabel={claimPreview?.network || config.chainCaip2}
-              receiverLabel={claimPreview?.payTo || config.x402PayTo || "Not configured"}
-              assetLabel={claimPreview?.asset}
-              descriptionLabel={claimPreview?.description}
-              errorLabel={claimPreview?.error}
-              onRefresh={() => void loadPaymentPreview("claim", "/api/claim", { policyId, eventId: claimEventId })}
-              loading={previewLoading === "claim"}
-              disabled={!policyId || !claimEventId || loading !== null}
-            />
+            <p className={styles.inlineText}>Claim check fee: ${config.x402ClaimFeeUsd} USDC</p>
 
             <div className={styles.subPanel}>
-              <h3 className={styles.subPanelTitle}>Policy NFT Detector</h3>
-              <div className={styles.actionRow}>
+              <div className={styles.policyPanelHeader}>
+                <h3 className={styles.subPanelTitle}>Policy NFT Detector</h3>
                 <button
                   type="button"
                   className={styles.secondaryAction}
                   onClick={() => void loadWalletPolicies()}
                   disabled={!isConnected || isWrongNetwork || loading !== null || walletPoliciesLoading}
                 >
-                  {walletPoliciesLoading ? "Detecting..." : "Detect Policies"}
+                  {walletPoliciesLoading ? "Detecting..." : "Refresh"}
                 </button>
               </div>
 
               {walletPoliciesTruncated ? (
-                <p className={styles.inlineText}>
-                  Scanning latest {POLICY_SCAN_LIMIT} policy IDs.
-                </p>
+                <p className={styles.inlineText}>Scanning latest {POLICY_SCAN_LIMIT} policy IDs.</p>
               ) : null}
 
               {walletPoliciesError ? <p className={styles.inlineError}>{walletPoliciesError}</p> : null}
 
               {walletPolicies.length > 0 ? (
-                <label className={styles.field}>
-                  <span className={styles.fieldLabel}>Select Policy</span>
-                  <select
-                    className={styles.select}
-                    value={policyId}
-                    onChange={(event) => {
-                      const selectedPolicyId = event.target.value;
-                      setPolicyId(selectedPolicyId);
-                      const selected = walletPolicies.find((item) => item.policyId === selectedPolicyId);
-                      if (selected?.eventId) setClaimEventId(selected.eventId);
-                    }}
-                  >
-                    {walletPolicies.map((item) => (
-                      <option key={item.policyId} value={item.policyId}>
-                        #{item.policyId} - {toStatusLabel(item.status)} - {item.eventId || "N/A"}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className={styles.policyCardGrid}>
+                  {walletPolicies.map((item) => {
+                    const isSelected = item.policyId === policyId;
+                    return (
+                      <button
+                        key={item.policyId}
+                        type="button"
+                        className={`${styles.policyCard} ${isSelected ? styles.policyCardSelected : ""}`}
+                        onClick={() => {
+                          setPolicyId(item.policyId);
+                          if (item.eventId) setClaimEventId(item.eventId);
+                        }}
+                      >
+                        <div className={styles.policyCardHead}>
+                          <span className={styles.policyCardTitle}>Policy #{item.policyId}</span>
+                          <span className="badge">{toStatusLabel(item.status)}</span>
+                        </div>
+                        <p className={styles.policyCardLine}>Event: {item.eventId || "N/A"}</p>
+                        <p className={styles.policyCardLine}>Payout: {formatUsdcAmount(item.payoutUSDC)}</p>
+                        <p className={styles.policyCardLine}>Premium: {formatUsdcAmount(item.premiumUSDC)}</p>
+                        <p className={styles.policyCardLine}>
+                          Coverage: {formatUnixSeconds(item.coverageStart)} to {formatUnixSeconds(item.coverageEnd)}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
               ) : (
                 <p className={styles.emptyHint}>No policies detected for this wallet.</p>
               )}
             </div>
 
-            <div className={styles.fieldGrid}>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Policy ID</span>
-                <input className={styles.input} value={policyId} onChange={(event) => setPolicyId(event.target.value)} />
-              </label>
-
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Event ID</span>
-                <input
-                  className={styles.input}
-                  value={claimEventId}
-                  onChange={(event) => setClaimEventId(event.target.value)}
-                />
-              </label>
+            <div className={styles.badgeRow}>
+              <span className="badge">Policy ID: {policyId || "Not selected"}</span>
+              <span className="badge">Event ID: {claimEventId || "Not selected"}</span>
+              <span className="badge">Status: {selectedStatusLabel}</span>
             </div>
 
             <div className={styles.actionRow}>
@@ -944,9 +1137,17 @@ export default function WorkflowDemoPage() {
             </div>
 
             {claimResponse?.ok && claimResponse.action === "CLAIM" ? (
-              <div className={styles.badgeRow}>
-                <span className="badge ok">Decision: {claimResponse.decision}</span>
-                {claimResponse.txHash ? <span className="badge ok">Tx confirmed</span> : null}
+              <div className={styles.outcomeCard}>
+                <h3 className={styles.subPanelTitle}>
+                  {claimDecisionCopy(claimResponse.decision).title}
+                </h3>
+                <p className={styles.inlineText}>
+                  {claimDecisionCopy(claimResponse.decision).description}
+                </p>
+                <div className={styles.badgeRow}>
+                  <span className="badge ok">Decision: {claimResponse.decision}</span>
+                  {claimResponse.txHash ? <span className="badge ok">Tx confirmed</span> : null}
+                </div>
               </div>
             ) : null}
 
@@ -963,11 +1164,9 @@ export default function WorkflowDemoPage() {
           </WorkflowStageCard>
         </div>
 
-        {/* ─── RIGHT: Developer Info ─── */}
         <div className={styles.infoPanel}>
-          <p className={styles.infoPanelHeader}>Developer Info</p>
+          <p className={styles.infoPanelHeader}>Workflow Details</p>
 
-          {/* Network & Config */}
           <div className={styles.infoCard}>
             <h3 className={styles.infoCardTitle}>Network</h3>
             <div className={styles.infoDetail}>
@@ -979,111 +1178,178 @@ export default function WorkflowDemoPage() {
               <span className={styles.infoDetailValue}>{config.creExecutionMode}</span>
             </div>
             <div className={styles.infoDetail}>
-              <span className={styles.infoDetailLabel}>x402 Fee</span>
-              <span className={styles.infoDetailValue}>${config.x402FixedFeeUsd} USDC</span>
+              <span className={styles.infoDetailLabel}>x402 Quote Fee</span>
+              <span className={styles.infoDetailValue}>${config.x402QuoteFeeUsd} USDC</span>
+            </div>
+            <div className={styles.infoDetail}>
+              <span className={styles.infoDetailLabel}>x402 Buy Fee</span>
+              <span className={styles.infoDetailValue}>${config.x402BuyFeeUsd} USDC</span>
+            </div>
+            <div className={styles.infoDetail}>
+              <span className={styles.infoDetailLabel}>x402 Claim Fee</span>
+              <span className={styles.infoDetailValue}>${config.x402ClaimFeeUsd} USDC</span>
             </div>
           </div>
 
-          {/* Payment Proofs */}
-          {quotePaymentProof && (
-            <div className={styles.infoCard}>
-              <h3 className={styles.infoCardTitle}>Quote Payment</h3>
-              <div className={styles.badgeRow}>
-                <span className={`badge ${quotePaymentProof.success === false ? "bad" : "ok"}`}>
-                  {quotePaymentProof.success === false ? "Failed" : "Settled"}
-                </span>
-                {quotePaymentProof.network && <span className="badge">{quotePaymentProof.network}</span>}
-              </div>
-              {quotePaymentProof.transaction && (
-                <a
-                  className={styles.inlineLink}
-                  href={`${config.basescan}/tx/${quotePaymentProof.transaction}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Payment tx →
+          <div className={styles.infoCard}>
+            <h3 className={styles.infoCardTitle}>Selected Policy</h3>
+            <div className={styles.infoDetail}>
+              <span className={styles.infoDetailLabel}>Policy ID</span>
+              <span className={styles.infoDetailValue}>{policyId || "N/A"}</span>
+            </div>
+            <div className={styles.infoDetail}>
+              <span className={styles.infoDetailLabel}>Event ID</span>
+              <span className={styles.infoDetailValue}>{claimEventId || "N/A"}</span>
+            </div>
+            <div className={styles.infoDetail}>
+              <span className={styles.infoDetailLabel}>Status</span>
+              <span className={styles.infoDetailValue}>{selectedStatusLabel}</span>
+            </div>
+            <div className={styles.infoDetail}>
+              <span className={styles.infoDetailLabel}>Payout</span>
+              <span className={styles.infoDetailValue}>
+                {selectedWalletPolicy ? formatUsdcAmount(selectedWalletPolicy.payoutUSDC) : "N/A"}
+              </span>
+            </div>
+            <div className={styles.infoDetail}>
+              <span className={styles.infoDetailLabel}>Premium</span>
+              <span className={styles.infoDetailValue}>
+                {selectedWalletPolicy ? formatUsdcAmount(selectedWalletPolicy.premiumUSDC) : "N/A"}
+              </span>
+            </div>
+            <div className={styles.infoDetail}>
+              <span className={styles.infoDetailLabel}>Coverage</span>
+              <span className={styles.infoDetailValue}>
+                {selectedWalletPolicy
+                  ? `${formatUnixSeconds(selectedWalletPolicy.coverageStart)} to ${formatUnixSeconds(selectedWalletPolicy.coverageEnd)}`
+                  : "N/A"}
+              </span>
+            </div>
+            <div className={styles.infoDetail}>
+              <span className={styles.infoDetailLabel}>Quote Expiry</span>
+              <span className={styles.infoDetailValue}>
+                {selectedWalletPolicy ? formatUnixSeconds(selectedWalletPolicy.quoteExpiry) : "N/A"}
+              </span>
+            </div>
+            <div className={styles.infoDetail}>
+              <span className={styles.infoDetailLabel}>Insured</span>
+              <span className={styles.infoDetailValue}>{selectedWalletPolicy?.insured || insured || "N/A"}</span>
+            </div>
+          </div>
+
+          <details className={styles.techDetails}>
+            <summary className={styles.techSummary}>Payment Proofs</summary>
+            <div className={styles.techBody}>
+              {quotePaymentProof ? (
+                <div className={styles.infoCard}>
+                  <h3 className={styles.infoCardTitle}>Quote Payment</h3>
+                  <div className={styles.badgeRow}>
+                    <span className={`badge ${quotePaymentProof.success === false ? "bad" : "ok"}`}>
+                      {quotePaymentProof.success === false ? "Failed" : "Settled"}
+                    </span>
+                    {quotePaymentProof.network ? <span className="badge">{quotePaymentProof.network}</span> : null}
+                  </div>
+                  {quotePaymentProof.transaction ? (
+                    <a
+                      className={styles.inlineLink}
+                      href={`${config.basescan}/tx/${quotePaymentProof.transaction}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Payment tx →
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {buyPaymentProof ? (
+                <div className={styles.infoCard}>
+                  <h3 className={styles.infoCardTitle}>Buy Payment</h3>
+                  <div className={styles.badgeRow}>
+                    <span className={`badge ${buyPaymentProof.success === false ? "bad" : "ok"}`}>
+                      {buyPaymentProof.success === false ? "Failed" : "Settled"}
+                    </span>
+                  </div>
+                  {buyPaymentProof.transaction ? (
+                    <a
+                      className={styles.inlineLink}
+                      href={`${config.basescan}/tx/${buyPaymentProof.transaction}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Payment tx →
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {claimPaymentProof ? (
+                <div className={styles.infoCard}>
+                  <h3 className={styles.infoCardTitle}>Claim Payment</h3>
+                  <div className={styles.badgeRow}>
+                    <span className={`badge ${claimPaymentProof.success === false ? "bad" : "ok"}`}>
+                      {claimPaymentProof.success === false ? "Failed" : "Settled"}
+                    </span>
+                  </div>
+                  {claimPaymentProof.transaction ? (
+                    <a
+                      className={styles.inlineLink}
+                      href={`${config.basescan}/tx/${claimPaymentProof.transaction}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Payment tx →
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {!quotePaymentProof && !buyPaymentProof && !claimPaymentProof ? (
+                <p className={styles.inlineText}>No payment proof yet.</p>
+              ) : null}
+            </div>
+          </details>
+
+          <details className={styles.techDetails}>
+            <summary className={styles.techSummary}>CRE Execution IDs</summary>
+            <div className={styles.techBody}>
+              {quoteAcceptedExecutionId ? (
+                <div className={styles.infoCard}>
+                  <h3 className={styles.infoCardTitle}>Quote</h3>
+                  <p className={styles.inlineText}>{quoteAcceptedExecutionId}</p>
+                </div>
+              ) : null}
+              {buyAcceptedExecutionId ? (
+                <div className={styles.infoCard}>
+                  <h3 className={styles.infoCardTitle}>Buy / Mint</h3>
+                  <p className={styles.inlineText}>{buyAcceptedExecutionId}</p>
+                </div>
+              ) : null}
+              {claimAcceptedExecutionId ? (
+                <div className={styles.infoCard}>
+                  <h3 className={styles.infoCardTitle}>Claim</h3>
+                  <p className={styles.inlineText}>{claimAcceptedExecutionId}</p>
+                </div>
+              ) : null}
+              {quoteAcceptedExecutionId || buyAcceptedExecutionId || claimAcceptedExecutionId ? (
+                <a className={styles.inlineLink} href={CRE_UI_WORKFLOWS_URL} target="_blank" rel="noreferrer">
+                  Track in CRE UI →
                 </a>
+              ) : (
+                <p className={styles.inlineText}>No pending CRE execution IDs.</p>
               )}
             </div>
-          )}
+          </details>
 
-          {buyPaymentProof && (
-            <div className={styles.infoCard}>
-              <h3 className={styles.infoCardTitle}>Buy Payment</h3>
-              <div className={styles.badgeRow}>
-                <span className={`badge ${buyPaymentProof.success === false ? "bad" : "ok"}`}>
-                  {buyPaymentProof.success === false ? "Failed" : "Settled"}
-                </span>
-              </div>
-              {buyPaymentProof.transaction && (
-                <a
-                  className={styles.inlineLink}
-                  href={`${config.basescan}/tx/${buyPaymentProof.transaction}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Payment tx →
-                </a>
-              )}
+          <details className={styles.techDetails}>
+            <summary className={styles.techSummary}>Raw API Responses</summary>
+            <div className={styles.techBody}>
+              <ResultPanel title="Quote Response" raw={quoteRaw} />
+              <ResultPanel title="Buy Response" raw={buyRaw} />
+              <ResultPanel title="Claim Response" raw={claimRaw} />
+              {!quoteRaw && !buyRaw && !claimRaw ? <p className={styles.inlineText}>No responses yet.</p> : null}
             </div>
-          )}
-
-          {claimPaymentProof && (
-            <div className={styles.infoCard}>
-              <h3 className={styles.infoCardTitle}>Claim Payment</h3>
-              <div className={styles.badgeRow}>
-                <span className={`badge ${claimPaymentProof.success === false ? "bad" : "ok"}`}>
-                  {claimPaymentProof.success === false ? "Failed" : "Settled"}
-                </span>
-              </div>
-              {claimPaymentProof.transaction && (
-                <a
-                  className={styles.inlineLink}
-                  href={`${config.basescan}/tx/${claimPaymentProof.transaction}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Payment tx →
-                </a>
-              )}
-            </div>
-          )}
-
-          {/* CRE Execution Tracking */}
-          {quoteAcceptedExecutionId && (
-            <div className={styles.infoCard}>
-              <h3 className={styles.infoCardTitle}>CRE Execution (Quote)</h3>
-              <p className={styles.inlineText}>{quoteAcceptedExecutionId}</p>
-              <a className={styles.inlineLink} href={CRE_UI_WORKFLOWS_URL} target="_blank" rel="noreferrer">
-                Track in CRE UI →
-              </a>
-            </div>
-          )}
-
-          {buyAcceptedExecutionId && (
-            <div className={styles.infoCard}>
-              <h3 className={styles.infoCardTitle}>CRE Execution (Buy)</h3>
-              <p className={styles.inlineText}>{buyAcceptedExecutionId}</p>
-              <a className={styles.inlineLink} href={CRE_UI_WORKFLOWS_URL} target="_blank" rel="noreferrer">
-                Track in CRE UI →
-              </a>
-            </div>
-          )}
-
-          {claimAcceptedExecutionId && (
-            <div className={styles.infoCard}>
-              <h3 className={styles.infoCardTitle}>CRE Execution (Claim)</h3>
-              <p className={styles.inlineText}>{claimAcceptedExecutionId}</p>
-              <a className={styles.inlineLink} href={CRE_UI_WORKFLOWS_URL} target="_blank" rel="noreferrer">
-                Track in CRE UI →
-              </a>
-            </div>
-          )}
-
-          {/* Raw JSON Responses */}
-          <ResultPanel title="Quote Response" raw={quoteRaw} />
-          <ResultPanel title="Buy Response" raw={buyRaw} />
-          <ResultPanel title="Claim Response" raw={claimRaw} />
+          </details>
         </div>
       </div>
     </main>

@@ -1,0 +1,329 @@
+CRE Quote Check – Pricing & Risk Model Plan
+1. Policy Tiers (Micro-Insurance)
+
+Keep tiers simple so users can buy multiple policies if needed.
+
+Tier	Payout	Intended Use
+Basic	$10	casual attendees
+Medium	$100	regular events
+Advanced	$1000	premium events
+
+Multiple policies can be purchased but each policy is individually priced and signed.
+
+2. Cancellation Probability Model
+
+CRE computes:
+
+pCancelBps
+
+where:
+
+100 bps = 1%
+
+Example:
+
+500 bps = 5% cancellation probability
+3. Risk Inputs
+3.1 Base Category Risk
+
+Source:
+Eventbrite API → category_id
+
+If category missing → lowest risk tier
+
+Example mapping:
+
+Event Category	Risk BPS
+Workshop / Education	200
+Meetup / Networking	300
+Conference	400
+Sports	450
+Concert / Music	550
+Festival / Multi-day	700
+Missing category	200
+
+Reasoning:
+Large logistics → higher cancellation probability.
+
+3.2 Event Size / Capacity Risk
+
+Source:
+
+capacity
+attendee_count
+
+Compute:
+
+capacity_utilization = attendee_count / capacity
+
+Risk bands:
+
+Capacity	Risk BPS
+< 50	+0
+50–200	+50
+200–1000	+120
+>1000	+200
+
+Large events fail more often due to:
+
+venue logistics
+
+regulatory issues
+
+weather impact
+
+organizer funding risks
+
+3.3 Online vs Outdoor Risk
+
+Source:
+
+Eventbrite event object:
+
+online_event
+venue
+
+Logic:
+
+Type	Risk BPS
+Online event	+0
+Indoor venue	+50
+Outdoor venue	+200
+Unknown	+80
+
+Reason:
+
+Outdoor events have significantly higher disruption probability.
+
+3.4 Organizer Experience
+
+Eventbrite API provides organizer events list:
+
+GET /v3/organizers/{organizer_id}/events/
+
+Compute:
+
+organizer_event_count
+
+Risk mapping:
+
+Organizer Event Count	Risk BPS
+> 50 events	-120
+10 – 50	-60
+3 – 10	0
+1 – 2	+80
+new organizer	+120
+
+Experienced organizers cancel far less.
+
+3.5 Gemini Variable #1
+Venue Risk Band
+
+Gemini analyzes news sentiment + region signals
+
+Example signals:
+
+safety issues
+
+weather alerts
+
+political unrest
+
+local infrastructure disruption
+
+Output:
+
+venueRiskBand
+
+Mapping:
+
+Band	Risk BPS
+low	0
+medium	+60
+high	+150
+unknown	+30
+3.6 Gemini Variable #2 (Recommended)
+Event Complexity Band
+
+Gemini analyzes event description.
+
+Indicators:
+
+multi-day
+
+multiple performers
+
+multiple venues
+
+large production
+
+travel dependencies
+
+Output:
+
+eventComplexityBand
+
+Mapping:
+
+Band	Risk BPS
+low	0
+medium	+60
+high	+120
+unknown	+40
+
+Complex events fail more often.
+
+4. Final Cancellation Probability
+
+Combine all risk components:
+
+pCancelBps =
+baseCategoryRisk
++ capacityRisk
++ venueTypeRisk
++ organizerRisk
++ venueRiskBand
++ complexityRisk
+
+Clamp limits:
+
+minimum = 200 bps (2%)
+maximum = 2000 bps (20%)
+5. Expected Loss
+expectedLoss = payout * (pCancelBps / 10000)
+
+Example:
+
+payout = 100
+pCancel = 600bps
+
+expectedLoss = 100 * 0.06
+expectedLoss = 6 USD
+6. Expense Load
+
+Covers:
+
+Gemini API cost
+
+CRE compute
+
+infrastructure
+
+monitoring
+
+expenseLoad = 10%
+7. Profit Margin
+
+Small margin as requested.
+
+profitLoad = 5%
+8. Utilization Load (Vault Safety)
+
+Vault variables:
+
+vaultBalanceUSDC
+totalActiveLiabilityUSDC
+minReserveRatioBps
+
+Compute:
+
+requiredReserves = totalActiveLiabilityUSDC * minReserveRatioBps
+utilization = requiredReserves / vaultBalance
+
+Load:
+
+Utilization	Load
+< 50%	0%
+50–70%	5%
+70–85%	10%
+>85%	reject quote
+
+This protects solvency.
+
+9. Final Premium Formula
+
+MVP formula:
+
+premium =
+max(
+    minPremium,
+    expectedLoss * (1 + expenseLoad + profitLoad + utilizationLoad)
+)
+10. Minimum Premium
+
+To prevent abuse:
+
+Tier	Min Premium
+$10 payout	$0.40
+$100 payout	$3
+$1000 payout	$20
+11. Example Quote
+
+Event:
+
+concert
+capacity = 800
+outdoor venue
+organizer events = 5
+venueRiskBand = medium
+eventComplexity = medium
+
+Risk:
+
+baseCategory = 550
+capacity = 120
+outdoor = 200
+organizer = 0
+venueRisk = 60
+complexity = 60
+pCancel = 990 bps (9.9%)
+
+For $100 payout
+
+expectedLoss = 9.9
+
+Premium:
+
+expense = 10%
+profit = 5%
+
+premium = 9.9 * 1.15
+premium ≈ 11.38 USD
+12. Quote Output
+
+CRE returns:
+
+{
+  payout: 100,
+  premium: 11.38,
+  pCancelBps: 990,
+  tier: "MEDIUM",
+  riskBands: {
+    category: "concert",
+    capacityBand: "200-1000",
+    venueType: "outdoor",
+    venueRiskBand: "medium",
+    complexityBand: "medium"
+  },
+  quoteExpiry: timestamp
+}
+13. Why This Model Works
+Fair
+
+Risk factors are transparent.
+
+Profitable
+
+Expected loss + margin ensures profitability.
+
+Scalable
+
+Gemini only extracts two structured variables.
+
+Robust
+
+Vault utilization prevents insolvency.
+
+Micro-insurance Friendly
+
+Small policies remain viable.

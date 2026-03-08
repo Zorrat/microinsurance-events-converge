@@ -11,14 +11,13 @@ It integrates:
 - Signed quote verification for minting
 
 Quote creation is Eventbrite-first:
-- Input requires `eventUrl` and `eventName`
+- Input requires `eventUrl` and `tier` (`BASIC | MEDIUM | ADVANCED`)
 - Workflow extracts canonical Eventbrite event ID from URL
-- Event name mismatches are non-blocking warnings
-- Workflow computes `payoutUSDC` and `premiumUSDC` dynamically
+- Workflow computes `payoutUSDC`, `premiumUSDC`, `pCancelBps`, and risk/load breakdowns
 - Workflow sets `coverageStart` at request time
 - Workflow sets `coverageEnd` to 24h after Eventbrite event boundary (`eventEnd`, or fallback `eventStart`)
 - Workflow sets `quoteExpiry` to 1h after request time
-- Pricing uses a single deterministic path for all users
+- Pricing uses deterministic category/capacity/venue/organizer + Gemini stub bands
 
 ## Prerequisites
 
@@ -36,6 +35,8 @@ bun install
 - `chainSelectorName`
 - `receiver`
 - `authorizedKeys`
+- `eventbriteApiBaseUrl`
+- Optional demo-only override: `claimEventbriteApiBaseUrl` (applies only to `CLAIM`)
 
 `authorizedKeys` may be empty in local simulation, but must include at least one key before deployment.
 For deployment, each entry in `authorizedKeys` is an EVM public address allowed to trigger the HTTP workflow.
@@ -64,12 +65,12 @@ cre workflow simulate ./event-microinsurance --target=staging-settings
 {
   "action": "QUOTE_CHECK",
   "eventUrl": "https://www.eventbrite.com/e/my-event-name-45263283700",
-  "eventName": "My Event Name",
-  "insured": "0x15d265Dc32a575755ACA19b5EcEAB8018CdD26F1"
+  "insured": "0x15d265Dc32a575755ACA19b5EcEAB8018CdD26F1",
+  "tier": "MEDIUM"
 }
 ```
 
-Any missing event risk variable falls back to the lowest tier/ordinal in pricing.
+Missing category/subcategory falls back to the default category risk (`200 bps`).
 
 `MINT`
 ```json
@@ -96,3 +97,15 @@ Any missing event risk variable falls back to the lowest tier/ordinal in pricing
 
 `CLAIM` enforces that the provided `eventId` matches the canonical `eventId`
 stored in the policy NFT; mismatches return `EVENT_ID_MISMATCH`.
+
+## Demo-only claim mock
+
+For demo recordings, you can keep real Eventbrite for `QUOTE_CHECK` and `MINT`, while routing only `CLAIM`
+event status checks to a mock endpoint:
+
+1. Start mock server:
+```bash
+node workflows/mock/mock-eventbrite.cjs
+```
+2. Set `claimEventbriteApiBaseUrl` in workflow config (for example `http://127.0.0.1:8787/v3`).
+3. Leave `eventbriteApiBaseUrl` pointed at real Eventbrite (`https://www.eventbriteapi.com/v3`).

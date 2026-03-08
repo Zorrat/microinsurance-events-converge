@@ -2,7 +2,6 @@
 node_modules/
 jspm_packages/
 
-
 # --- Smart Contract Artifacts (Hardhat/Truffle) ---
 artifacts/
 cache/

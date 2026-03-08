@@ -376,3 +376,341 @@ Reserve-backed solvency.
 Deterministic settlement.
 Tamper-resistant CRE integration.
 Hackathon-ready design.
+
+---
+
+11. CURRENT ENDPOINT DATA MODELS (SOURCE OF TRUTH)
+
+---
+
+Updated: March 7, 2026
+
+This section is the canonical data-contract map for the workflow HTTP actions and the objects passed between `QUOTE_CHECK -> MINT -> CLAIM`.
+
+Action names in production workflow:
+
+* `QUOTE_CHECK`
+* `MINT`
+* `CLAIM`
+
+---
+
+11.1 WORKFLOW INPUT UNION
+
+---
+
+`WorkflowInput = QuoteCheckInput | MintInput | ClaimInput`
+
+```ts
+type QuoteCheckInput = {
+  action: "QUOTE_CHECK";
+  eventUrl: string;
+  insured: string;
+  tier: "BASIC" | "MEDIUM" | "ADVANCED";
+  nonce?: `0x${string}`;
+};
+
+type MintInput = {
+  action: "MINT";
+  approved: boolean;
+  signedQuote: SignedQuote;
+};
+
+type ClaimInput = {
+  action: "CLAIM";
+  eventId: string;
+  policyId: string;
+};
+```
+
+Important:
+
+* `eventName` is NOT part of `QuoteCheckInput`.
+* `eventName` is NOT required by `MINT` or `CLAIM`.
+
+---
+
+11.2 QUOTE_CHECK OUTPUT MODELS
+
+---
+
+`QUOTE_CHECK` returns one of:
+
+1. Success + quote valid
+2. Success + quote invalid with reason
+3. Failure `{ ok: false, error }`
+
+Success envelope:
+
+```ts
+{
+  ok: true;
+  action: "QUOTE_CHECK";
+  quoteValid: boolean;
+  reason?: string;
+  event: EventSummary;
+  canonicalEventId?: string;
+  pricing?: PricingResult;
+  warnings?: string[];
+  signedQuote?: SignedQuote;
+}
+```
+
+If `quoteValid === true`, `signedQuote` is present and is the handoff object for `MINT`.
+
+Common rejection reasons:
+
+* `EVENT_ALREADY_CANCELED`
+* `EVENT_TIME_UNAVAILABLE`
+* `COVERAGE_WINDOW_ALREADY_PASSED`
+* `VAULT_UTILIZATION_TOO_HIGH`
+* `INSUFFICIENT_RESERVES_FOR_PAYOUT`
+
+---
+
+11.3 EVENT AND PRICING MODELS RETURNED FROM QUOTE_CHECK
+
+---
+
+`EventSummary` (subset shown for flow relevance):
+
+```ts
+type EventSummary = {
+  eventId?: string;
+  eventName?: string;
+  eventUrl?: string;
+  canceled?: boolean;
+  eventStart?: number;
+  eventEnd?: number;
+  categoryId?: string;
+  categoryName?: string;
+  subcategoryId?: string;
+  subcategoryName?: string;
+  organizerPastEvents?: number;
+  organizerFutureEvents?: number;
+  onlineEvent?: boolean;
+  capacity?: number;
+  descriptionText?: string;
+  venueName?: string;
+  venueCity?: string;
+  venueRegion?: string;
+  venueCountry?: string;
+  isSeries?: boolean;
+};
+```
+
+`PricingResult`:
+
+```ts
+type PricingResult = {
+  tier: "BASIC" | "MEDIUM" | "ADVANCED";
+  payoutUSDC: string;
+  premiumUSDC: string;
+  pCancelBps: number;
+  expectedLossUSDC: string;
+  reserveUtilizationBps: number;
+  riskBands: {
+    category: string;
+    capacityBand: "<50" | "50-199" | "200-1000" | ">1000" | "unknown";
+    venueType: "online" | "offline" | "unknown";
+    organizerExperience: "new" | "1-2" | "3-9" | "10-50" | ">50" | "unknown";
+    venueRiskBand: "low" | "medium" | "high" | "unknown";
+    complexityBand: "low" | "medium" | "high" | "unknown";
+  };
+  riskBreakdownBps: {
+    category: number;
+    capacity: number;
+    venueType: number;
+    organizer: number;
+    venueRisk: number;
+    complexity: number;
+  };
+  loadBreakdownBps: {
+    expense: number;
+    profit: number;
+    utilization: number;
+    total: number;
+  };
+};
+```
+
+---
+
+11.4 SIGNED QUOTE HANDOFF MODEL (QUOTE_CHECK -> MINT)
+
+---
+
+`SignedQuote` is produced in `QUOTE_CHECK` and must be forwarded unchanged to `MINT`.
+
+```ts
+type Quote = {
+  quoteVersion: number;
+  insured: `0x${string}`;
+  eventId: string;
+  eventIdHash: `0x${string}`;
+  eventStart: number;
+  coverageStart: number;
+  coverageEnd: number;
+  quoteExpiry: number;
+  payoutUSDC: string;
+  premiumUSDC: string;
+  nonce: `0x${string}`;
+};
+
+type SignedQuote = {
+  quote: Quote;
+  quoteHash: `0x${string}`;
+  signature: `0x${string}`;
+  signer: `0x${string}`;
+};
+```
+
+Validation in `MINT`:
+
+* Signature recovers workflow signer
+* `quoteHash` recomputes correctly
+* `eventIdHash` matches `quote.eventId`
+* `quoteExpiry` not passed
+
+---
+
+11.5 MINT REQUEST/RESPONSE MODELS
+
+---
+
+Request:
+
+```ts
+{
+  action: "MINT";
+  approved: boolean;
+  signedQuote: SignedQuote;
+}
+```
+
+Success response:
+
+```ts
+{
+  ok: true;
+  action: "MINT";
+  txHash?: string;
+  policyId?: string;
+  tokenId?: string;
+  policyNftAddress?: `0x${string}`;
+  note: string;
+}
+```
+
+Common failures:
+
+* `NOT_APPROVED`
+* `BAD_QUOTE_SIGNATURE`
+* `QUOTE_EXPIRED`
+* `EVENT_ALREADY_CANCELED`
+* `INVALID_POLICY_NFT_ADDRESS`
+
+---
+
+11.6 CLAIM REQUEST/RESPONSE MODELS
+
+---
+
+Request:
+
+```ts
+{
+  action: "CLAIM";
+  eventId: string;
+  policyId: string;
+}
+```
+
+Success response:
+
+```ts
+{
+  ok: true;
+  action: "CLAIM";
+  decision: "PAY" | "RESOLVE_NO_PAYOUT" | "NO_OP";
+  txHash?: string;
+  note: string;
+  event: EventSummary;
+}
+```
+
+Claim rejection before settlement:
+
+* `EVENT_ID_MISMATCH` when `input.eventId` differs from canonical `PolicyNFT.getPolicy(policyId).eventId`.
+
+---
+
+11.7 ONCHAIN POLICY MODEL USED BY CLAIM
+
+---
+
+`CLAIM` reads `PolicyNFT.getPolicy(policyId)` tuple:
+
+```ts
+{
+  eventIdHash: bytes32;
+  eventId: string;
+  eventStart: uint64;
+  coverageStart: uint64;
+  coverageEnd: uint64;
+  quoteExpiry: uint64;
+  payoutUSDC: uint128;
+  premiumUSDC: uint128;
+  insured: address;
+  status: uint8;
+}
+```
+
+`eventId` from this tuple is the canonical key used to fetch Eventbrite status and enforce input matching.
+
+---
+
+11.8 CRE REPORT PAYLOAD MODEL (MINT/CLAIM -> RECEIVER)
+
+---
+
+Workflow writes ABI-encoded report:
+
+```ts
+type ReportData = {
+  action: 0 | 1 | 2; // 0=MINT, 1=PAY, 2=RESOLVE_NO_PAYOUT
+  policyId: bigint;
+  mint: {
+    to: `0x${string}`;
+    eventId: string;
+    eventIdHash: `0x${string}`;
+    eventStart: bigint;
+    coverageStart: bigint;
+    coverageEnd: bigint;
+    quoteExpiry: bigint;
+    payoutUSDC: bigint;
+    premiumUSDC: bigint;
+  };
+};
+```
+
+Usage:
+
+* `MINT`: `action=0`, full `mint` populated from signed quote.
+* `CLAIM PAY/RESOLVE`: `action=1|2`, `mint=emptyMintData()`.
+
+---
+
+11.9 END-TO-END FLOW MAP
+
+---
+
+1. Client calls `QUOTE_CHECK` with `eventUrl + insured + tier`.
+2. Workflow returns `signedQuote` if quote is valid.
+3. Client calls `MINT` with `approved=true` and the exact `signedQuote`.
+4. Workflow emits onchain MINT report and returns `policyId`.
+5. Client calls `CLAIM` with `policyId + eventId` (canonical event ID).
+6. Workflow reads policy, enforces event ID match, fetches Eventbrite, then decides:
+   * `PAY`
+   * `RESOLVE_NO_PAYOUT`
+   * `NO_OP`

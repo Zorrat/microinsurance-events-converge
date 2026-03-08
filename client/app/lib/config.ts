@@ -11,6 +11,19 @@ export const config = {
   basescan: process.env.NEXT_PUBLIC_BASESCAN || "https://sepolia.basescan.org",
   baseRpcUrl: process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://sepolia.base.org",
   x402FixedFeeUsd: process.env.NEXT_PUBLIC_X402_FIXED_FEE_USD || "0.01",
+  x402QuoteFeeUsd:
+    process.env.NEXT_PUBLIC_X402_QUOTE_FEE_USD ||
+    process.env.NEXT_PUBLIC_X402_FIXED_FEE_USD ||
+    "0.01",
+  x402BuyFeeUsd:
+    process.env.NEXT_PUBLIC_X402_BUY_FEE_USD ||
+    process.env.NEXT_PUBLIC_X402_MINT_FEE_USD ||
+    process.env.NEXT_PUBLIC_X402_FIXED_FEE_USD ||
+    "0.01",
+  x402ClaimFeeUsd:
+    process.env.NEXT_PUBLIC_X402_CLAIM_FEE_USD ||
+    process.env.NEXT_PUBLIC_X402_FIXED_FEE_USD ||
+    "0.01",
   x402PayTo: (process.env.NEXT_PUBLIC_X402_PAY_TO || process.env.NEXT_PUBLIC_POLICY_VAULT || "") as `0x${string}`,
 
   usdc: (process.env.NEXT_PUBLIC_USDC_ADDRESS ||

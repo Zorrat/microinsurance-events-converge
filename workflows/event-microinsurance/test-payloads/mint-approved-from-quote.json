@@ -3,20 +3,20 @@
   "approved": true,
   "signedQuote": {
     "quote": {
-      "coverageEnd": 1773108000,
-      "coverageStart": 1772547174,
-      "eventId": "896748186967",
-      "eventIdHash": "0x925d11cac441ebb6c34e4e1e055b10099fec5ed8a8932ea7970d013ca9dd20dd",
-      "eventStart": 1772992800,
+      "coverageEnd": 1773280800,
+      "coverageStart": 1772945396,
+      "eventId": "1982833122245",
+      "eventIdHash": "0xb78862cb3285c79dd103509bb8a748ef81b5c5ad72f984f396cd5e6a8336a3da",
+      "eventStart": 1773187200,
       "insured": "0x5125E6b78b5Cf53248EcB5A22Ce539341FE90Cd8",
-      "nonce": "0x4b33b6bb412be493ad9a66ce0d90eb34832b976b1008e9c4d63cf4486b901aa3",
+      "nonce": "0x4367091e67ed896a6d4f8902da4209bfb43f9b183e55a3b329e20e4961d181e7",
       "payoutUSDC": "10000000",
-      "premiumUSDC": "1000000",
-      "quoteExpiry": 1772550774,
+      "premiumUSDC": "736000",
+      "quoteExpiry": 1772948996,
       "quoteVersion": 1
     },
-    "quoteHash": "0x422c94ea83a7185591f47e79e88a90456134b72035bb7803fc2a50d22fa0dfcb",
-    "signature": "0xa3cb08f9ae1983b9c41cf8d4003ba2bea117ce867564e94abc64b7ed29ebbbac7d9579c4841d20f66ba15c71f49f63398d76ebcb70e98ea54d5769ec588c4a081b",
+    "quoteHash": "0x795fcdb0ec07e9554651a1c8a3e76751b3ae07c5b9eeb4148e6d77f844afbb8e",
+    "signature": "0xf90ee12ada5975902d8b79adced467aba0473d35186e3ea6f04903582d78a2f52c2bb71636c2813a41c908af49958f001799b6a3b5b7bc1ff054c480b1dd206e1c",
     "signer": "0x7e813EC06504032c965C33C790f27c3D2A21aaA2"
   }
 }

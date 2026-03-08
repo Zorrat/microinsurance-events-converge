@@ -25,8 +25,8 @@ const postHandler = async (
   const result = await executeWorkflow({
     action: "QUOTE_CHECK",
     eventUrl: body.data.eventUrl,
-    eventName: body.data.eventName,
     insured: body.data.insured,
+    tier: body.data.tier,
     ...(body.data.nonce ? { nonce: body.data.nonce } : {}),
   });
 

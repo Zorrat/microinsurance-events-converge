@@ -30,22 +30,27 @@ const commonAccepts = {
   scheme: "exact" as const,
   network: serverConfig.x402Network,
   payTo: serverConfig.x402PayTo,
-  price: serverConfig.x402PriceUsd,
 };
 
-export const makeRouteConfig = (description: string): RouteConfig => ({
-  accepts: commonAccepts,
+export const makeRouteConfig = (description: string, price: string): RouteConfig => ({
+  accepts: {
+    ...commonAccepts,
+    price,
+  },
   description,
 });
 
 export const quoteRouteConfig = makeRouteConfig(
   "Quote check for event cancellation policy via CRE workflow",
+  serverConfig.x402QuotePriceUsd,
 );
 
 export const buyRouteConfig = makeRouteConfig(
   "Mint a policy from a previously signed quote via CRE workflow",
+  serverConfig.x402BuyPriceUsd,
 );
 
 export const claimRouteConfig = makeRouteConfig(
   "Submit claim settlement check for an active policy via CRE workflow",
+  serverConfig.x402ClaimPriceUsd,
 );

@@ -4,6 +4,7 @@ import { withX402 } from "@x402/next";
 import type { ClaimWorkflowOk, WorkflowError } from "@/app/lib/cre-types";
 import { claimRequestSchema, parseRequestJson } from "@/app/lib/validation";
 import { executeWorkflow } from "@/app/lib/server/cre-client";
+import { serverConfig } from "@/app/lib/server/env";
 import { claimRouteConfig, x402Server } from "@/app/lib/server/x402";
 
 export const runtime = "nodejs";
@@ -24,8 +25,10 @@ const postHandler = async (
 
   const result = await executeWorkflow({
     action: "CLAIM",
-    policyId: body.data.policyId,
-    eventId: body.data.eventId,
+    policyId: body.data.policyId.trim(),
+    eventId: body.data.eventId.trim(),
+  }, {
+    workflowId: serverConfig.creClaimWorkflowId || undefined,
   });
 
   if (result.ok && result.action !== "CLAIM") {

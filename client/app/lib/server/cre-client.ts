@@ -43,6 +43,10 @@ type CreGatewayResponse = {
   error?: JsonRpcError;
 };
 
+type ExecuteWorkflowOptions = {
+  workflowId?: string;
+};
+
 const asError = (message: string): WorkflowResult => ({ ok: false, error: message });
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -98,19 +102,19 @@ const extractStatus = (response: CreGatewayResponse): string => {
   return "UNKNOWN";
 };
 
-const buildExecuteRequest = (input: WorkflowInput): JsonRpcExecuteRequest => ({
+const buildExecuteRequest = (input: WorkflowInput, workflowId: string): JsonRpcExecuteRequest => ({
   id: randomUUID(),
   jsonrpc: "2.0",
   method: "workflows.execute",
   params: {
     input,
     workflow: {
-      workflowID: serverConfig.creWorkflowId,
+      workflowID: workflowId,
     },
   },
 });
 
-const buildPollRequest = (executionId: string): JsonRpcPollRequest | null => {
+const buildPollRequest = (executionId: string, workflowId: string): JsonRpcPollRequest | null => {
   if (!serverConfig.creExecutionPollMethod) return null;
 
   return {
@@ -119,7 +123,7 @@ const buildPollRequest = (executionId: string): JsonRpcPollRequest | null => {
     method: serverConfig.creExecutionPollMethod,
     params: {
       workflowExecutionID: executionId,
-      workflowID: serverConfig.creWorkflowId,
+      workflowID: workflowId,
     },
   };
 };
@@ -183,13 +187,16 @@ const doGatewayRequest = async (
   }
 };
 
-const pollForWorkflowResult = async (executionId: string): Promise<WorkflowResult | null> => {
+const pollForWorkflowResult = async (
+  executionId: string,
+  workflowId: string,
+): Promise<WorkflowResult | null> => {
   if (!serverConfig.creExecutionPollUrl || !serverConfig.creExecutionPollMethod) return null;
 
   const deadline = Date.now() + serverConfig.crePollMaxMs;
 
   while (Date.now() <= deadline) {
-    const pollRequest = buildPollRequest(executionId);
+    const pollRequest = buildPollRequest(executionId, workflowId);
     if (!pollRequest) return null;
 
     const pollResponse = await doGatewayRequest(pollRequest, serverConfig.creExecutionPollUrl);
@@ -205,19 +212,26 @@ const pollForWorkflowResult = async (executionId: string): Promise<WorkflowResul
   return null;
 };
 
-export const executeWorkflow = async (input: WorkflowInput): Promise<WorkflowResult> => {
+export const executeWorkflow = async (
+  input: WorkflowInput,
+  options: ExecuteWorkflowOptions = {},
+): Promise<WorkflowResult> => {
   if (serverConfig.creExecutionMode === "simulate") {
     return executeWorkflowSimulation(input);
   }
-  return executeWorkflowGateway(input);
+  return executeWorkflowGateway(input, options);
 };
 
-export const executeWorkflowGateway = async (input: WorkflowInput): Promise<WorkflowResult> => {
-  if (!serverConfig.creWorkflowId) {
+export const executeWorkflowGateway = async (
+  input: WorkflowInput,
+  options: ExecuteWorkflowOptions = {},
+): Promise<WorkflowResult> => {
+  const workflowId = options.workflowId?.trim() || serverConfig.creWorkflowId;
+  if (!workflowId) {
     return asError("CRE_TRIGGER_FAILED:MISSING_WORKFLOW_ID");
   }
 
-  const executeRequest = buildExecuteRequest(input);
+  const executeRequest = buildExecuteRequest(input, workflowId);
   const response = await doGatewayRequest(executeRequest, serverConfig.creGatewayUrl);
   if (!response.ok) {
     return asError(response.error);
@@ -230,7 +244,7 @@ export const executeWorkflowGateway = async (input: WorkflowInput): Promise<Work
 
   const executionId = extractExecutionId(response.payload);
   if (executionId) {
-    const polled = await pollForWorkflowResult(executionId);
+    const polled = await pollForWorkflowResult(executionId, workflowId);
     if (polled) return polled;
     return asError(`CRE_ACCEPTED:${executionId}`);
   }

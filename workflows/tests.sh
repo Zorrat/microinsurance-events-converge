@@ -97,13 +97,12 @@ echo "Using BROADCAST=$BROADCAST"
 
 # 1) Quote scenarios (static payloads)
 run_payload "quote-check.json"
-run_payload "quote-check-name-mismatch.json"
 run_payload "quote-check-invalid-url.json"
 run_payload "quote-check-invalid-insured.json"
 run_payload "quote-check-direct-id.json"
 
 # 2) MINT negative path (no signature check needed, should fail fast)
-run_payload "mint-not-approved.json"
+run_payload "mint-not-approved-from-quote.json"
 
 # 3) MINT positive path using fresh CRE-signed quote from quote-check.json
 QUOTE_RESULT="$TMP_DIR/quote-check.json.result.json"

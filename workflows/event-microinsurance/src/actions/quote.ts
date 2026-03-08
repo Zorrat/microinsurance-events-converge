@@ -8,12 +8,22 @@ import {
 } from "@chainlink/cre-sdk";
 import { decodeFunctionResult, encodeFunctionData, isAddress, zeroAddress } from "viem";
 
-import type { Config, Quote, QuoteCheckInput, WorkflowResult } from "../types";
+import type { Config, PolicyTier, Quote, QuoteCheckInput, WorkflowResult } from "../types";
 import { CREReceiverABI, ERC20ABI, PolicyVaultABI } from "../abi";
 import { fetchEventbriteEvent } from "../services/eventbrite";
+import { assessGeminiRisk, assessGeminiRiskStub } from "../services/gemini";
 import { computePricing } from "../services/pricing";
 import { hashEventId, normalizeNonce, randomNonceHex, signQuote } from "../quotes";
-import { mustHexAddress, normalizeEventName, nowSec, parseEventbriteEventIdFromUrl } from "../utils";
+import { mustHexAddress, nowSec, parseEventbriteEventIdFromUrl } from "../utils";
+
+const toPolicyTier = (value: unknown): PolicyTier => {
+  if (typeof value !== "string") throw new Error("INVALID_POLICY_TIER");
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "BASIC" || normalized === "MEDIUM" || normalized === "ADVANCED") {
+    return normalized;
+  }
+  throw new Error("INVALID_POLICY_TIER");
+};
 
 export const handleQuoteCheck = async (
   runtime: Runtime<Config>,
@@ -27,6 +37,7 @@ export const handleQuoteCheck = async (
     const QUOTE_TTL_SEC = 60 * 60;
     const COVERAGE_EXTENSION_SEC = 24 * 60 * 60;
     const insured = mustHexAddress(input.insured, "insured");
+    const tier = toPolicyTier(input.tier);
     const receiver = mustHexAddress(config.receiver, "receiver");
     const rawEventUrl = input.eventUrl?.trim() ?? "";
     runtime.log(`[QUOTE_CHECK] eventUrl.raw=${rawEventUrl}`);
@@ -135,13 +146,6 @@ export const handleQuoteCheck = async (
     }
 
     const warnings: string[] = [];
-    const normalizedInputName = normalizeEventName(input.eventName);
-    const normalizedApiName = normalizeEventName(event.eventName ?? "");
-    const eventNameMatch =
-      normalizedInputName.length > 0 && normalizedApiName.length > 0
-        ? normalizedInputName === normalizedApiName
-        : undefined;
-    if (eventNameMatch === false) warnings.push("EVENT_NAME_MISMATCH");
 
     const policyVault = readAndDecode("receiver.policyVault", receiver, CREReceiverABI, "policyVault");
     if (!isAddress(policyVault) || policyVault.toLowerCase() === zeroAddress) {
@@ -172,7 +176,18 @@ export const handleQuoteCheck = async (
     }
     const vaultBalanceUSDC = readAndDecode("usdc.balanceOf(vault)", usdc, ERC20ABI, "balanceOf", [policyVault]);
 
-    const geminiOrdinal = config.gemini?.enabled ? (config.gemini.defaultRiskOrdinal ?? 0) : 0;
+    let gemini = assessGeminiRiskStub(event, config);
+    if (config.gemini?.enabled === true) {
+      try {
+        gemini = assessGeminiRisk(runtime, httpClient, event, config);
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : String(err);
+        runtime.log(`[QUOTE_CHECK] gemini.live-fallback reason=${reason}`);
+        warnings.push("GEMINI_FALLBACK_UNKNOWN");
+        gemini = assessGeminiRiskStub(event, config);
+      }
+    }
+
     const pricing = computePricing({
       event,
       reserve: {
@@ -181,19 +196,36 @@ export const handleQuoteCheck = async (
         minReserveRatioBps: BigInt(minReserveRatioBps),
         vaultBalanceUSDC: BigInt(vaultBalanceUSDC),
       },
-      nowSec: tNow,
-      geminiOrdinal,
+      tier,
+      gemini,
       pricing: config.pricing,
     });
     const pricingResult = {
-      computedPayoutUSDC: pricing.computedPayoutUSDC,
-      computedPremiumUSDC: pricing.computedPremiumUSDC,
+      tier: pricing.tier,
+      payoutUSDC: pricing.payoutUSDC,
+      premiumUSDC: pricing.premiumUSDC,
       pCancelBps: pricing.pCancelBps,
       expectedLossUSDC: pricing.expectedLossUSDC,
       reserveUtilizationBps: pricing.reserveUtilizationBps,
+      riskBands: pricing.riskBands,
+      riskBreakdownBps: pricing.riskBreakdownBps,
+      loadBreakdownBps: pricing.loadBreakdownBps,
     };
 
-    const newLiability = BigInt(totalActiveLiabilityUSDC) + pricing.payoutUSDC;
+    if (pricing.utilizationRejected) {
+      return {
+        ok: true,
+        action: "QUOTE_CHECK",
+        quoteValid: false,
+        reason: "VAULT_UTILIZATION_TOO_HIGH",
+        event,
+        canonicalEventId: resolvedEventId,
+        pricing: pricingResult,
+        ...(warnings.length > 0 ? { warnings } : {}),
+      };
+    }
+
+    const newLiability = BigInt(totalActiveLiabilityUSDC) + pricing.payoutUSDCBigInt;
     const requiredAfter = (newLiability * BigInt(minReserveRatioBps) + 9999n) / 10000n;
     if (BigInt(vaultBalanceUSDC) < requiredAfter) {
       return {
@@ -217,8 +249,8 @@ export const handleQuoteCheck = async (
       coverageStart,
       coverageEnd,
       quoteExpiry,
-      payoutUSDC: pricing.computedPayoutUSDC,
-      premiumUSDC: pricing.computedPremiumUSDC,
+      payoutUSDC: pricing.payoutUSDC,
+      premiumUSDC: pricing.premiumUSDC,
       nonce: normalizeNonce(input.nonce ?? randomNonceHex(runtime)),
     };
 
@@ -231,7 +263,6 @@ export const handleQuoteCheck = async (
       event,
       canonicalEventId: resolvedEventId,
       pricing: pricingResult,
-      ...(eventNameMatch !== undefined ? { eventNameMatch } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
       signedQuote,
     };

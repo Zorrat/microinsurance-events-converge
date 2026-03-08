@@ -142,11 +142,22 @@ describe("deterministic vectors", () => {
       status: "canceled",
       start: { utc: "2026-03-01T10:00:00Z" },
       end: { utc: "2026-03-01T12:00:00Z" },
+      category_id: "103",
+      category: { id: "103", name: "Music" },
+      subcategory_id: "3003",
+      subcategory: { id: "3003", name: "Classical" },
+      organizer: { num_past_events: 5, num_future_events: 2 },
     });
 
     expect(canceled.canceled).toBe(true);
     expect(canceled.eventStart).toBe(1772359200);
     expect(canceled.eventEnd).toBe(1772366400);
+    expect(canceled.categoryId).toBe("103");
+    expect(canceled.categoryName).toBe("Music");
+    expect(canceled.subcategoryId).toBe("3003");
+    expect(canceled.subcategoryName).toBe("Classical");
+    expect(canceled.organizerPastEvents).toBe(5);
+    expect(canceled.organizerFutureEvents).toBe(2);
 
     const active = normalizeEventbriteEvent({
       status: "live",
@@ -179,7 +190,7 @@ describe("deterministic vectors", () => {
     );
   });
 
-  it("pricing is unaffected by event name mismatches", () => {
+  it("maps category risk by ID and falls back to default", () => {
     const reserve = {
       requiredReserves: 1_000_000n,
       totalActiveLiabilityUSDC: 2_000_000n,
@@ -187,29 +198,83 @@ describe("deterministic vectors", () => {
       vaultBalanceUSDC: 10_000_000n,
     };
 
-    const baseEvent = {
-      capacity: 500,
-      onlineEvent: false,
-      salesStatus: "on_sale",
-      eventStart: 1_800_000_000,
+    const mappedCategory = computePricing({
+      event: { categoryId: "103", categoryName: "Music", onlineEvent: true, capacity: 10 },
+      reserve,
+      tier: "MEDIUM",
+      gemini: { venueRiskBand: "unknown", complexityBand: "unknown" },
+    });
+
+    const fallbackCategory = computePricing({
+      event: { categoryId: "999", categoryName: "Unknown", onlineEvent: true, capacity: 10 },
+      reserve,
+      tier: "MEDIUM",
+      gemini: { venueRiskBand: "unknown", complexityBand: "unknown" },
+    });
+
+    expect(mappedCategory.riskBreakdownBps.category).toBe(550);
+    expect(fallbackCategory.riskBreakdownBps.category).toBe(200);
+  });
+
+  it("applies tier payouts and minimum premiums", () => {
+    const reserve = {
+      requiredReserves: 1_000_000n,
+      totalActiveLiabilityUSDC: 2_000_000n,
+      minReserveRatioBps: 11_000n,
+      vaultBalanceUSDC: 10_000_000n,
     };
 
-    const pricingA = computePricing({
-      event: { ...baseEvent, eventName: "Correct Event Name" },
+    const event = {
+      categoryId: "115",
+      categoryName: "Family & Education",
+      capacity: 40,
+      onlineEvent: true,
+      organizerPastEvents: 100,
+      organizerFutureEvents: 0,
+    };
+
+    const basic = computePricing({
+      event,
       reserve,
-      nowSec: 1_799_900_000,
+      tier: "BASIC",
+      gemini: { venueRiskBand: "low", complexityBand: "low" },
+    });
+    const medium = computePricing({
+      event,
+      reserve,
+      tier: "MEDIUM",
+      gemini: { venueRiskBand: "low", complexityBand: "low" },
+    });
+    const advanced = computePricing({
+      event,
+      reserve,
+      tier: "ADVANCED",
+      gemini: { venueRiskBand: "low", complexityBand: "low" },
     });
 
-    const pricingB = computePricing({
-      event: { ...baseEvent, eventName: "Completely Wrong Event Name" },
-      reserve,
-      nowSec: 1_799_900_000,
+    expect(basic.payoutUSDC).toBe("10000000");
+    expect(medium.payoutUSDC).toBe("100000000");
+    expect(advanced.payoutUSDC).toBe("1000000000");
+
+    expect(basic.premiumUSDC).toBe("400000");
+    expect(medium.premiumUSDC).toBe("3000000");
+    expect(BigInt(advanced.premiumUSDC)).toBeGreaterThanOrEqual(20_000_000n);
+  });
+
+  it("flags utilization reject when reserve usage exceeds 85%", () => {
+    const pricing = computePricing({
+      event: { categoryId: "103", categoryName: "Music", onlineEvent: false, capacity: 800 },
+      reserve: {
+        requiredReserves: 8_500_000n,
+        totalActiveLiabilityUSDC: 2_000_000n,
+        minReserveRatioBps: 11_000n,
+        vaultBalanceUSDC: 10_000_000n,
+      },
+      tier: "MEDIUM",
+      gemini: { venueRiskBand: "medium", complexityBand: "medium" },
     });
 
-    expect(pricingA.computedPayoutUSDC).toBe(pricingB.computedPayoutUSDC);
-    expect(pricingA.computedPremiumUSDC).toBe(pricingB.computedPremiumUSDC);
-    expect(pricingA.pCancelBps).toBe(pricingB.pCancelBps);
-    expect(pricingA.expectedLossUSDC).toBe(pricingB.expectedLossUSDC);
-    expect(pricingA.reserveUtilizationBps).toBe(pricingB.reserveUtilizationBps);
+    expect(pricing.reserveUtilizationBps).toBe(8500);
+    expect(pricing.utilizationRejected).toBe(true);
   });
 });

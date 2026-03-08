@@ -20495,18 +20495,19 @@ var parseEventbriteEventIdFromUrl = (rawUrl) => {
     return bestMatch;
   throw new Error("INVALID_EVENTBRITE_URL");
 };
-var normalizeEventName = (value2) => {
-  const input = typeof value2 === "string" ? value2 : String(value2 ?? "");
-  const maybeNormalize = input.normalize;
-  const normalized = typeof maybeNormalize === "function" ? maybeNormalize.call(input, "NFKD") : input;
-  return normalized.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
-};
 var getSecretValue = (runtime2, id, config) => {
   const namespace = config.secretsNamespace ?? "env";
   const secret = runtime2.getSecret({ id, namespace }).result();
   if (!secret.value)
     throw new Error(`Missing secret value for ${id}`);
   return secret.value;
+};
+var parseMaybeNumber = (value2) => {
+  if (typeof value2 === "number" && Number.isFinite(value2))
+    return value2;
+  if (typeof value2 === "string" && Number.isFinite(Number(value2)))
+    return Number(value2);
+  return;
 };
 var normalizeEventbriteEvent = (payload) => {
   const event = payload?.event ?? payload;
@@ -20522,6 +20523,18 @@ var normalizeEventbriteEvent = (payload) => {
   const eventName = typeof event?.name?.text === "string" ? event.name.text : typeof event?.name === "string" ? event.name : undefined;
   const eventUrl = typeof event?.url === "string" ? event.url : undefined;
   const onlineEvent = typeof event?.online_event === "boolean" ? event.online_event : undefined;
+  const categoryId = typeof event?.category_id === "string" ? event.category_id : typeof event?.category?.id === "string" ? event.category.id : undefined;
+  const categoryName = typeof event?.category?.name === "string" ? event.category.name : typeof event?.category?.short_name === "string" ? event.category.short_name : undefined;
+  const subcategoryId = typeof event?.subcategory_id === "string" ? event.subcategory_id : typeof event?.subcategory?.id === "string" ? event.subcategory.id : undefined;
+  const subcategoryName = typeof event?.subcategory?.name === "string" ? event.subcategory.name : undefined;
+  const organizerPastEvents = parseMaybeNumber(event?.organizer?.num_past_events);
+  const organizerFutureEvents = parseMaybeNumber(event?.organizer?.num_future_events);
+  const descriptionText = typeof event?.description?.text === "string" ? event.description.text : typeof event?.summary === "string" ? event.summary : undefined;
+  const venueName = typeof event?.venue?.name === "string" ? event.venue.name : undefined;
+  const venueCity = typeof event?.venue?.address?.city === "string" ? event.venue.address.city : typeof event?.venue?.address?.localized_area_display === "string" ? event.venue.address.localized_area_display : undefined;
+  const venueRegion = typeof event?.venue?.address?.region === "string" ? event.venue.address.region : undefined;
+  const venueCountry = typeof event?.venue?.address?.country === "string" ? event.venue.address.country : undefined;
+  const isSeries = typeof event?.is_series === "boolean" ? event.is_series : undefined;
   if (eventId !== undefined)
     summary.eventId = eventId;
   if (eventName !== undefined)
@@ -20540,18 +20553,46 @@ var normalizeEventbriteEvent = (payload) => {
     summary.eventEnd = eventEnd;
   if (rawStatus !== undefined)
     summary.rawStatus = rawStatus;
+  if (categoryId !== undefined)
+    summary.categoryId = categoryId;
+  if (categoryName !== undefined)
+    summary.categoryName = categoryName;
+  if (subcategoryId !== undefined)
+    summary.subcategoryId = subcategoryId;
+  if (subcategoryName !== undefined)
+    summary.subcategoryName = subcategoryName;
+  if (organizerPastEvents !== undefined)
+    summary.organizerPastEvents = organizerPastEvents;
+  if (organizerFutureEvents !== undefined)
+    summary.organizerFutureEvents = organizerFutureEvents;
+  if (descriptionText !== undefined)
+    summary.descriptionText = descriptionText;
+  if (venueName !== undefined)
+    summary.venueName = venueName;
+  if (venueCity !== undefined)
+    summary.venueCity = venueCity;
+  if (venueRegion !== undefined)
+    summary.venueRegion = venueRegion;
+  if (venueCountry !== undefined)
+    summary.venueCountry = venueCountry;
+  if (isSeries !== undefined)
+    summary.isSeries = isSeries;
   return summary;
 };
-var fetchEventbriteEvent = (runtime2, httpClient, eventId, config) => {
+var fetchEventbriteEvent = (runtime2, httpClient, eventId, config, options) => {
   const token = getSecretValue(runtime2, config.eventbriteApiTokenSecretName, config);
+  const configuredBaseUrl = options?.baseUrl?.trim() || config.eventbriteApiBaseUrl;
   const getEvent = httpClient.sendRequest(runtime2, (sendRequester, eid) => {
-    const base = config.eventbriteApiBaseUrl.replace(/\/$/, "");
-    const url = `${base}/events/${encodeURIComponent(eid)}/`;
+    const base = configuredBaseUrl.replace(/\/$/, "");
+    const expandedFields = encodeURIComponent("category,subcategory,organizer,venue");
+    const url = `${base}/events/${encodeURIComponent(eid)}/?expand=${expandedFields}`;
+    runtime2.log(`[EVENTBRITE] GET ${url}`);
     const res = sendRequester.sendRequest({
       url,
       method: "GET",
       headers: { Authorization: `Bearer ${token}` }
     }).result();
+    runtime2.log(`[EVENTBRITE] status=${res.statusCode} eventId=${eid}`);
     if (res.statusCode !== 200) {
       throw new Error(`Eventbrite get event failed: status=${res.statusCode}`);
     }
@@ -20563,7 +20604,8 @@ var fetchEventbriteEvent = (runtime2, httpClient, eventId, config) => {
 var handleClaim = async (runtime2, httpClient, evm, input, config) => {
   try {
     const receiver = mustHexAddress(config.receiver, "receiver");
-    const policyId = BigInt(input.policyId);
+    const policyId = BigInt(input.policyId.trim());
+    const submittedEventId = input.eventId.trim();
     const receiverReadData = encodeFunctionData({
       abi: CREReceiverABI,
       functionName: "policyNft",
@@ -20600,10 +20642,40 @@ var handleClaim = async (runtime2, httpClient, evm, input, config) => {
       functionName: "getPolicy",
       data: bytesToHex(policyRead.data)
     });
-    const canonicalEventId = policy.eventId;
-    if (canonicalEventId !== input.eventId)
+    const canonicalEventId = typeof policy.eventId === "string" ? policy.eventId.trim() : "";
+    if (canonicalEventId.length === 0)
+      return { ok: false, error: "POLICY_NOT_FOUND_OR_NOT_MINTED" };
+    if (canonicalEventId !== submittedEventId)
       return { ok: false, error: "EVENT_ID_MISMATCH" };
-    const event = fetchEventbriteEvent(runtime2, httpClient, canonicalEventId, config);
+    const policyStatus = typeof policy.status === "number" ? policy.status : Number(policy.status);
+    if (policyStatus === 2) {
+      return {
+        ok: true,
+        action: "CLAIM",
+        decision: "PAY",
+        note: "Policy already paid. No new settlement transaction submitted.",
+        event: { eventId: canonicalEventId }
+      };
+    }
+    if (policyStatus === 3) {
+      return {
+        ok: true,
+        action: "CLAIM",
+        decision: "RESOLVE_NO_PAYOUT",
+        note: "Policy already resolved with no payout. No new settlement transaction submitted.",
+        event: { eventId: canonicalEventId }
+      };
+    }
+    if (policyStatus !== 1) {
+      return { ok: false, error: "POLICY_NOT_ACTIVE" };
+    }
+    const claimEventbriteApiBaseUrl = typeof config.claimEventbriteApiBaseUrl === "string" && config.claimEventbriteApiBaseUrl.trim().length > 0 ? config.claimEventbriteApiBaseUrl : undefined;
+    if (claimEventbriteApiBaseUrl) {
+      runtime2.log(`[CLAIM] using claim Eventbrite base URL override: ${claimEventbriteApiBaseUrl}`);
+    }
+    const event = fetchEventbriteEvent(runtime2, httpClient, canonicalEventId, config, {
+      baseUrl: claimEventbriteApiBaseUrl
+    });
     const tNow = nowSec(runtime2);
     const policyCoverageEndSec = typeof policy.coverageEnd === "bigint" ? Number(policy.coverageEnd) : typeof policy.coverageEnd === "number" ? policy.coverageEnd : undefined;
     const eventOverBoundarySec = event.eventEnd ?? policyCoverageEndSec;
@@ -20934,23 +21006,331 @@ var handleMint = async (runtime2, httpClient, evm, input, config) => {
     return { ok: false, error: e?.message ?? "MINT_FAILED" };
   }
 };
+var DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+var DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+var DEFAULT_MAX_RETRIES = 1;
+var GEMINI_SYSTEM_PROMPT = `You are a deterministic risk-band classifier for event cancellation insurance.
+Use Google Search grounding results together with the provided event JSON.
+
+Task:
+Return exactly one JSON object with keys:
+- venueRiskBand
+- complexityBand
+
+Allowed values for each key:
+"low", "medium", "high", "unknown"
+
+Hard rules:
+1) Output JSON only. No markdown. No prose.
+2) Do not output additional keys.
+3) Use only provided event JSON and grounded Google Search evidence. Do not use unstated assumptions.
+4) If data is insufficient for a decision, return "unknown".
+5) If multiple rules apply, choose the highest-risk applicable band.`;
+var normalizeRiskBand = (value2) => {
+  if (typeof value2 !== "string")
+    return "unknown";
+  const normalized = value2.trim().toLowerCase();
+  if (normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "unknown") {
+    return normalized;
+  }
+  return "unknown";
+};
+var parseRiskBandStrict = (label, value2) => {
+  if (typeof value2 !== "string")
+    throw new Error(`GEMINI_INVALID_${label.toUpperCase()}_TYPE`);
+  const normalized = value2.trim().toLowerCase();
+  if (normalized !== "low" && normalized !== "medium" && normalized !== "high" && normalized !== "unknown") {
+    throw new Error(`GEMINI_INVALID_${label.toUpperCase()}_VALUE:${normalized}`);
+  }
+  return normalized;
+};
+var defaultGeminiAssessment = (config) => {
+  return {
+    venueRiskBand: normalizeRiskBand(config.gemini?.defaultVenueRiskBand),
+    complexityBand: normalizeRiskBand(config.gemini?.defaultComplexityBand)
+  };
+};
+var toGeminiRiskAssessmentRequest = (event) => {
+  return {
+    eventId: event.eventId,
+    eventName: event.eventName,
+    eventUrl: event.eventUrl,
+    categoryName: event.categoryName,
+    subcategoryName: event.subcategoryName,
+    capacity: event.capacity,
+    onlineEvent: event.onlineEvent,
+    organizerPastEvents: event.organizerPastEvents,
+    organizerFutureEvents: event.organizerFutureEvents,
+    eventStart: event.eventStart,
+    eventEnd: event.eventEnd,
+    descriptionText: event.descriptionText,
+    venueName: event.venueName,
+    venueCity: event.venueCity,
+    venueRegion: event.venueRegion,
+    venueCountry: event.venueCountry,
+    isSeries: event.isSeries
+  };
+};
+var buildDeterministicContext = (request) => {
+  return {
+    eventId: request.eventId ?? null,
+    eventName: request.eventName ?? null,
+    eventUrl: request.eventUrl ?? null,
+    categoryName: request.categoryName ?? null,
+    subcategoryName: request.subcategoryName ?? null,
+    capacity: request.capacity ?? null,
+    onlineEvent: request.onlineEvent ?? null,
+    organizerPastEvents: request.organizerPastEvents ?? null,
+    organizerFutureEvents: request.organizerFutureEvents ?? null,
+    eventStart: request.eventStart ?? null,
+    eventEnd: request.eventEnd ?? null,
+    descriptionText: request.descriptionText ?? null,
+    venueName: request.venueName ?? null,
+    venueCity: request.venueCity ?? null,
+    venueRegion: request.venueRegion ?? null,
+    venueCountry: request.venueCountry ?? null,
+    isSeries: request.isSeries ?? null
+  };
+};
+var buildGeminiUserPrompt = (request) => {
+  const contextJson = JSON.stringify(buildDeterministicContext(request));
+  return `Classify venue and complexity risk for this event input.
+
+Decision rubric:
+
+Venue Risk:
+- high: major disruption indicators exist in input (severe weather alert, civil unrest, safety incident, major transport disruption)
+- medium: moderate disruption indicators exist (weather watch, minor transport disruption, notable local conflict)
+- low: event is online OR no disruption indicators are present
+- unknown: required context is missing
+
+Complexity Risk:
+- high: multi-day OR multi-venue OR large performer/speaker set OR explicit travel dependency
+- medium: moderate production complexity signals (multiple speakers/vendors, medium-large attendance, partial logistics complexity)
+- low: simple single-session event with limited operational complexity
+- unknown: insufficient information
+
+Input JSON:
+${contextJson}`;
+};
+var buildGeminiRequestPayload = (request) => {
+  return {
+    systemInstruction: {
+      parts: [{ text: GEMINI_SYSTEM_PROMPT }]
+    },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: buildGeminiUserPrompt(request) }]
+      }
+    ],
+    tools: [
+      {
+        google_search: {}
+      }
+    ],
+    generationConfig: {
+      candidateCount: 1,
+      temperature: 0,
+      topP: 0,
+      topK: 1,
+      maxOutputTokens: 64
+    }
+  };
+};
+var parseGeminiStructuredOutput = (rawText) => {
+  const parseJsonLoose = (input) => {
+    const trimmed = input.trim();
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1];
+      if (fenced) {
+        try {
+          return JSON.parse(fenced.trim());
+        } catch {}
+      }
+      const firstBrace = trimmed.indexOf("{");
+      const lastBrace = trimmed.lastIndexOf("}");
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+      }
+      throw new Error("GEMINI_NON_JSON_OUTPUT");
+    }
+  };
+  let parsed;
+  try {
+    parsed = parseJsonLoose(rawText);
+  } catch {
+    throw new Error("GEMINI_NON_JSON_OUTPUT");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("GEMINI_JSON_NOT_OBJECT");
+  }
+  const obj = parsed;
+  const keys = Object.keys(obj);
+  if (keys.length !== 2 || !keys.includes("venueRiskBand") || !keys.includes("complexityBand")) {
+    throw new Error("GEMINI_SCHEMA_MISMATCH");
+  }
+  return {
+    venueRiskBand: parseRiskBandStrict("venueRiskBand", obj.venueRiskBand),
+    complexityBand: parseRiskBandStrict("complexityBand", obj.complexityBand)
+  };
+};
+var parseGeminiApiResponse = (bodyText) => {
+  let parsed;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    throw new Error("GEMINI_INVALID_RESPONSE_JSON");
+  }
+  const candidate = parsed.candidates?.[0];
+  const partText = candidate?.content?.parts?.find((part) => typeof part.text === "string")?.text;
+  if (!partText) {
+    const blockReason = parsed.promptFeedback?.blockReason;
+    if (blockReason)
+      throw new Error(`GEMINI_BLOCKED:${blockReason}`);
+    throw new Error("GEMINI_EMPTY_CANDIDATE");
+  }
+  const structured = parseGeminiStructuredOutput(partText);
+  return {
+    venueRiskBand: structured.venueRiskBand,
+    complexityBand: structured.complexityBand
+  };
+};
+var callGeminiGenerateContent = (runtime2, httpClient, input) => {
+  const fetchGemini = httpClient.sendRequest(runtime2, (sendRequester, req) => {
+    let lastError;
+    for (let attempt = 0;attempt <= req.maxRetries; attempt += 1) {
+      try {
+        const requestBody = new TextEncoder().encode(JSON.stringify(req.payload));
+        const request = {
+          url: req.url,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: requestBody
+        };
+        const res = sendRequester.sendRequest(request).result();
+        const bodyText = new TextDecoder().decode(res.body);
+        if (res.statusCode !== 200) {
+          const bodyHead = bodyText.slice(0, 180).replace(/\s+/g, " ");
+          throw new Error(`GEMINI_HTTP_${res.statusCode}:${bodyHead}`);
+        }
+        return parseGeminiApiResponse(bodyText);
+      } catch (err) {
+        lastError = err;
+        if (attempt >= req.maxRetries)
+          break;
+      }
+    }
+    const msg = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown error");
+    throw new Error(`GEMINI_REQUEST_FAILED:${msg}`);
+  }, consensusIdenticalAggregation());
+  return fetchGemini(input).result();
+};
+var assessGeminiRisk = (runtime2, httpClient, event, config) => {
+  const model = config.gemini?.model?.trim() || DEFAULT_GEMINI_MODEL;
+  if (!model)
+    throw new Error("GEMINI_MODEL_MISSING");
+  const apiSecretName = config.gemini?.apiKeySecretName?.trim() || "GEMINI_API_KEY";
+  const apiKey = getSecretValue(runtime2, apiSecretName, config);
+  const baseUrl = (config.gemini?.baseUrl?.trim() || DEFAULT_GEMINI_BASE_URL).replace(/\/$/, "");
+  const maxRetries = config.gemini?.maxRetries ?? DEFAULT_MAX_RETRIES;
+  const request = toGeminiRiskAssessmentRequest(event);
+  const payload = buildGeminiRequestPayload(request);
+  const url = `${baseUrl}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  return callGeminiGenerateContent(runtime2, httpClient, {
+    url,
+    payload,
+    maxRetries
+  });
+};
+var assessGeminiRiskStub = (_event, config) => {
+  return defaultGeminiAssessment(config);
+};
 var DEFAULT_PRICING = {
-  capacityThresholds: [200, 1000],
-  payoutTiersUSDC: ["10000000", "25000000", "50000000"],
-  baseCancelBps: 200,
-  minCancelBps: 50,
+  tierPayoutUSDC: {
+    BASIC: "10000000",
+    MEDIUM: "100000000",
+    ADVANCED: "1000000000"
+  },
+  tierMinPremiumUSDC: {
+    BASIC: "400000",
+    MEDIUM: "3000000",
+    ADVANCED: "20000000"
+  },
+  categoryRiskById: {
+    "101": 400,
+    "102": 400,
+    "103": 550,
+    "104": 400,
+    "105": 400,
+    "106": 300,
+    "107": 300,
+    "108": 450,
+    "109": 450,
+    "110": 300,
+    "111": 300,
+    "112": 300,
+    "113": 300,
+    "114": 300,
+    "115": 200,
+    "116": 700,
+    "117": 300,
+    "118": 300,
+    "119": 300,
+    "120": 200,
+    "199": 300
+  },
+  categoryRiskByName: {
+    business: 400,
+    "science & tech": 400,
+    music: 550,
+    "sports & fitness": 450,
+    "travel & outdoor": 450,
+    "family & education": 200,
+    education: 200,
+    "seasonal & holiday": 700,
+    "community & culture": 300,
+    meetup: 300,
+    networking: 300,
+    conference: 400,
+    festival: 700
+  },
+  defaultCategoryRiskBps: 200,
+  minCancelBps: 200,
   maxCancelBps: 2000,
-  capacityWeightBps: 70,
-  modeWeightBps: 30,
-  timeWeightBps: 50,
-  salesWeightBps: 40,
-  geminiWeightBps: 60,
-  expenseLoadBps: 800,
-  profitLoadBps: 600,
-  reserveUtilizationTriggerBps: 8000,
-  reserveLoadSlopeBps: 2000,
-  flatFeeUSDC: "500000",
-  minPremiumUSDC: "1000000"
+  venueTypeRiskBps: {
+    online: 0,
+    offline: 50,
+    unknown: 80
+  },
+  organizerRiskBps: {
+    new: 120,
+    oneToTwo: 80,
+    threeToNine: 0,
+    tenToFifty: -60,
+    aboveFifty: -120
+  },
+  venueRiskBandBps: {
+    low: 0,
+    medium: 60,
+    high: 150,
+    unknown: 30
+  },
+  complexityBandBps: {
+    low: 0,
+    medium: 60,
+    high: 120,
+    unknown: 40
+  },
+  expenseLoadBps: 1000,
+  profitLoadBps: 500,
+  utilizationBandLowBps: 5000,
+  utilizationBandMediumBps: 7000,
+  utilizationRejectBps: 8500,
+  utilizationLoadBps50To70: 500,
+  utilizationLoadBps70To85: 1000
 };
 var BPS = 10000n;
 var clampInt = (value2, min, max) => {
@@ -20970,72 +21350,159 @@ var toSafeNumber = (value2) => {
   const clipped = value2 > max ? max : value2 < 0n ? 0n : value2;
   return Number(clipped);
 };
-var capacityTier = (capacity, cfg) => {
-  if (!capacity || capacity <= 0)
-    return 0;
-  const thresholds = [...cfg.capacityThresholds].sort((a, b) => a - b);
-  for (let i2 = 0;i2 < thresholds.length; i2 += 1) {
-    if (capacity <= thresholds[i2])
-      return i2;
+var normalizeMapKey = (value2) => value2.trim().toLowerCase().replace(/\s+/g, " ");
+var categoryRisk = (event, cfg) => {
+  const byId = cfg.categoryRiskById ?? {};
+  const byName = cfg.categoryRiskByName ?? {};
+  const defaultRisk = cfg.defaultCategoryRiskBps ?? 200;
+  if (typeof event.categoryId === "string" && event.categoryId.length > 0) {
+    const fromId = byId[event.categoryId];
+    if (typeof fromId === "number") {
+      return {
+        categoryRiskBps: fromId,
+        categoryBand: event.categoryName ?? event.categoryId
+      };
+    }
   }
-  return thresholds.length;
+  const namesToTry = [event.categoryName, event.subcategoryName].filter((v) => typeof v === "string" && v.trim().length > 0).map((v) => normalizeMapKey(v));
+  for (const key of namesToTry) {
+    const fromName = byName[key];
+    if (typeof fromName === "number") {
+      return {
+        categoryRiskBps: fromName,
+        categoryBand: event.categoryName ?? event.subcategoryName ?? key
+      };
+    }
+  }
+  return {
+    categoryRiskBps: defaultRisk,
+    categoryBand: event.categoryName ?? event.categoryId ?? "unknown"
+  };
 };
-var salesOrdinal = (status) => {
-  const s = (status ?? "").toLowerCase();
-  if (s === "sold_out" || s === "sales_ended")
-    return 2;
-  if (s === "not_yet_on_sale" || s === "unavailable")
-    return 1;
-  return 0;
+var capacityRisk = (capacity) => {
+  if (typeof capacity !== "number" || !Number.isFinite(capacity) || capacity < 0) {
+    return { capacityRiskBps: 0, capacityBand: "unknown" };
+  }
+  if (capacity < 50)
+    return { capacityRiskBps: 0, capacityBand: "<50" };
+  if (capacity < 200)
+    return { capacityRiskBps: 50, capacityBand: "50-199" };
+  if (capacity <= 1000)
+    return { capacityRiskBps: 120, capacityBand: "200-1000" };
+  return { capacityRiskBps: 200, capacityBand: ">1000" };
 };
-var timeOrdinal = (eventStart, nowSec2) => {
-  if (!eventStart)
-    return 0;
-  const hours = (eventStart - nowSec2) / 3600;
-  if (hours <= 24)
-    return 2;
-  if (hours <= 24 * 7)
-    return 1;
-  return 0;
+var venueTypeRisk = (onlineEvent, cfg) => {
+  const venueCfg = cfg.venueTypeRiskBps ?? DEFAULT_PRICING.venueTypeRiskBps;
+  if (onlineEvent === true)
+    return { venueTypeRiskBps: venueCfg.online, venueTypeBand: "online" };
+  if (onlineEvent === false)
+    return { venueTypeRiskBps: venueCfg.offline, venueTypeBand: "offline" };
+  return { venueTypeRiskBps: venueCfg.unknown, venueTypeBand: "unknown" };
+};
+var organizerRisk = (past, future, cfg) => {
+  const organizerCfg = cfg.organizerRiskBps ?? DEFAULT_PRICING.organizerRiskBps;
+  const hasPast = typeof past === "number" && Number.isFinite(past) && past >= 0;
+  const hasFuture = typeof future === "number" && Number.isFinite(future) && future >= 0;
+  if (!hasPast && !hasFuture) {
+    return { organizerRiskBps: organizerCfg.new, organizerExperienceBand: "new" };
+  }
+  const total = Math.max(0, hasPast ? Math.floor(past) : 0) + Math.max(0, hasFuture ? Math.floor(future) : 0);
+  if (total <= 0)
+    return { organizerRiskBps: organizerCfg.new, organizerExperienceBand: "new" };
+  if (total <= 2)
+    return { organizerRiskBps: organizerCfg.oneToTwo, organizerExperienceBand: "1-2" };
+  if (total <= 9)
+    return { organizerRiskBps: organizerCfg.threeToNine, organizerExperienceBand: "3-9" };
+  if (total <= 50)
+    return { organizerRiskBps: organizerCfg.tenToFifty, organizerExperienceBand: "10-50" };
+  return { organizerRiskBps: organizerCfg.aboveFifty, organizerExperienceBand: ">50" };
+};
+var bandRisk = (map, band) => {
+  const fromMap = map[band];
+  if (typeof fromMap === "number")
+    return fromMap;
+  return map.unknown ?? 0;
 };
 var computePricing = (input) => {
   const cfg = { ...DEFAULT_PRICING, ...input.pricing ?? {} };
-  if (cfg.payoutTiersUSDC.length === 0)
-    throw new Error("pricing.payoutTiersUSDC must not be empty");
-  const tier = Math.min(capacityTier(input.event.capacity, cfg), cfg.payoutTiersUSDC.length - 1);
-  const payoutUSDC = BigInt(cfg.payoutTiersUSDC[tier]);
-  const capacityOrd = tier;
-  const modeOrd = input.event.onlineEvent === true ? 1 : 0;
-  const timeOrd = timeOrdinal(input.event.eventStart, input.nowSec);
-  const salesOrd = salesOrdinal(input.event.salesStatus);
-  const geminiOrd = Math.max(0, input.geminiOrdinal ?? 0);
-  const pCancelRaw = cfg.baseCancelBps + cfg.capacityWeightBps * capacityOrd + cfg.modeWeightBps * modeOrd + cfg.timeWeightBps * timeOrd + cfg.salesWeightBps * salesOrd + cfg.geminiWeightBps * geminiOrd;
-  const pCancelBps = clampInt(pCancelRaw, cfg.minCancelBps, cfg.maxCancelBps);
+  const payoutRaw = cfg.tierPayoutUSDC[input.tier];
+  const minPremiumRaw = cfg.tierMinPremiumUSDC[input.tier];
+  if (!payoutRaw)
+    throw new Error(`pricing.tierPayoutUSDC missing for tier=${input.tier}`);
+  if (!minPremiumRaw)
+    throw new Error(`pricing.tierMinPremiumUSDC missing for tier=${input.tier}`);
+  const payoutUSDC = BigInt(payoutRaw);
+  const { categoryRiskBps, categoryBand } = categoryRisk(input.event, cfg);
+  const { capacityRiskBps, capacityBand } = capacityRisk(input.event.capacity);
+  const { venueTypeRiskBps, venueTypeBand } = venueTypeRisk(input.event.onlineEvent, cfg);
+  const { organizerRiskBps, organizerExperienceBand } = organizerRisk(input.event.organizerPastEvents, input.event.organizerFutureEvents, cfg);
+  const venueRiskBandBpsMap = cfg.venueRiskBandBps ?? DEFAULT_PRICING.venueRiskBandBps;
+  const complexityBandBpsMap = cfg.complexityBandBps ?? DEFAULT_PRICING.complexityBandBps;
+  const venueRiskBps = bandRisk(venueRiskBandBpsMap, input.gemini.venueRiskBand);
+  const complexityRiskBps = bandRisk(complexityBandBpsMap, input.gemini.complexityBand);
+  const pCancelRaw = categoryRiskBps + capacityRiskBps + venueTypeRiskBps + organizerRiskBps + venueRiskBps + complexityRiskBps;
+  const pCancelBps = clampInt(pCancelRaw, cfg.minCancelBps ?? 200, cfg.maxCancelBps ?? 2000);
   const expectedLossUSDC = mulDivCeil(payoutUSDC, BigInt(pCancelBps), BPS);
   const reserveUtilizationBpsBig = input.reserve.vaultBalanceUSDC > 0n ? mulDivCeil(input.reserve.requiredReserves, BPS, input.reserve.vaultBalanceUSDC) : 1000000n;
-  const trigger = BigInt(cfg.reserveUtilizationTriggerBps);
-  const utilizationExcess = reserveUtilizationBpsBig > trigger ? reserveUtilizationBpsBig - trigger : 0n;
-  const reserveLoadBps = mulDivCeil(utilizationExcess, BigInt(cfg.reserveLoadSlopeBps), BPS);
-  const totalLoadBps = BigInt(cfg.expenseLoadBps) + BigInt(cfg.profitLoadBps) + reserveLoadBps;
-  const loadedLossUSDC = mulDivCeil(expectedLossUSDC, BPS + totalLoadBps, BPS);
-  const premiumWithFee = loadedLossUSDC + BigInt(cfg.flatFeeUSDC);
-  const minPremium = BigInt(cfg.minPremiumUSDC);
-  const premiumUSDC = premiumWithFee > minPremium ? premiumWithFee : minPremium;
+  const reserveUtilizationBps = toSafeNumber(reserveUtilizationBpsBig);
+  const utilizationBandLowBps = cfg.utilizationBandLowBps ?? 5000;
+  const utilizationBandMediumBps = cfg.utilizationBandMediumBps ?? 7000;
+  const utilizationRejectBps = cfg.utilizationRejectBps ?? 8500;
+  const utilizationLoadBps = reserveUtilizationBps >= utilizationBandMediumBps ? cfg.utilizationLoadBps70To85 ?? 1000 : reserveUtilizationBps >= utilizationBandLowBps ? cfg.utilizationLoadBps50To70 ?? 500 : 0;
+  const utilizationRejected = reserveUtilizationBps >= utilizationRejectBps;
+  const loadBreakdownBps = {
+    expense: cfg.expenseLoadBps,
+    profit: cfg.profitLoadBps,
+    utilization: utilizationLoadBps,
+    total: cfg.expenseLoadBps + cfg.profitLoadBps + utilizationLoadBps
+  };
+  const loadedLossUSDC = mulDivCeil(expectedLossUSDC, BPS + BigInt(loadBreakdownBps.total), BPS);
+  const minPremiumUSDC = BigInt(minPremiumRaw);
+  const premiumUSDC = loadedLossUSDC > minPremiumUSDC ? loadedLossUSDC : minPremiumUSDC;
   return {
-    payoutUSDC,
-    premiumUSDC,
-    computedPayoutUSDC: payoutUSDC.toString(),
-    computedPremiumUSDC: premiumUSDC.toString(),
+    tier: input.tier,
+    payoutUSDCBigInt: payoutUSDC,
+    premiumUSDCBigInt: premiumUSDC,
+    utilizationRejected,
     pCancelBps,
     expectedLossUSDC: expectedLossUSDC.toString(),
-    reserveUtilizationBps: toSafeNumber(reserveUtilizationBpsBig)
+    reserveUtilizationBps,
+    riskBands: {
+      category: categoryBand,
+      capacityBand,
+      venueType: venueTypeBand,
+      organizerExperience: organizerExperienceBand,
+      venueRiskBand: input.gemini.venueRiskBand,
+      complexityBand: input.gemini.complexityBand
+    },
+    riskBreakdownBps: {
+      category: categoryRiskBps,
+      capacity: capacityRiskBps,
+      venueType: venueTypeRiskBps,
+      organizer: organizerRiskBps,
+      venueRisk: venueRiskBps,
+      complexity: complexityRiskBps
+    },
+    loadBreakdownBps,
+    payoutUSDC: payoutUSDC.toString(),
+    premiumUSDC: premiumUSDC.toString()
   };
+};
+var toPolicyTier = (value2) => {
+  if (typeof value2 !== "string")
+    throw new Error("INVALID_POLICY_TIER");
+  const normalized = value2.trim().toUpperCase();
+  if (normalized === "BASIC" || normalized === "MEDIUM" || normalized === "ADVANCED") {
+    return normalized;
+  }
+  throw new Error("INVALID_POLICY_TIER");
 };
 var handleQuoteCheck = async (runtime2, httpClient, evm, input, config) => {
   try {
     const QUOTE_TTL_SEC = 60 * 60;
     const COVERAGE_EXTENSION_SEC = 24 * 60 * 60;
     const insured = mustHexAddress(input.insured, "insured");
+    const tier = toPolicyTier(input.tier);
     const receiver = mustHexAddress(config.receiver, "receiver");
     const rawEventUrl = input.eventUrl?.trim() ?? "";
     runtime2.log(`[QUOTE_CHECK] eventUrl.raw=${rawEventUrl}`);
@@ -21125,11 +21592,6 @@ var handleQuoteCheck = async (runtime2, httpClient, evm, input, config) => {
       };
     }
     const warnings = [];
-    const normalizedInputName = normalizeEventName(input.eventName);
-    const normalizedApiName = normalizeEventName(event.eventName ?? "");
-    const eventNameMatch = normalizedInputName.length > 0 && normalizedApiName.length > 0 ? normalizedInputName === normalizedApiName : undefined;
-    if (eventNameMatch === false)
-      warnings.push("EVENT_NAME_MISMATCH");
     const policyVault = readAndDecode("receiver.policyVault", receiver, CREReceiverABI, "policyVault");
     if (!isAddress(policyVault) || policyVault.toLowerCase() === zeroAddress) {
       throw new Error("INVALID_POLICY_VAULT_ADDRESS");
@@ -21142,7 +21604,17 @@ var handleQuoteCheck = async (runtime2, httpClient, evm, input, config) => {
       throw new Error("INVALID_USDC_ADDRESS");
     }
     const vaultBalanceUSDC = readAndDecode("usdc.balanceOf(vault)", usdc, ERC20ABI, "balanceOf", [policyVault]);
-    const geminiOrdinal = config.gemini?.enabled ? config.gemini.defaultRiskOrdinal ?? 0 : 0;
+    let gemini = assessGeminiRiskStub(event, config);
+    if (config.gemini?.enabled === true) {
+      try {
+        gemini = assessGeminiRisk(runtime2, httpClient, event, config);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        runtime2.log(`[QUOTE_CHECK] gemini.live-fallback reason=${reason}`);
+        warnings.push("GEMINI_FALLBACK_UNKNOWN");
+        gemini = assessGeminiRiskStub(event, config);
+      }
+    }
     const pricing = computePricing({
       event,
       reserve: {
@@ -21151,18 +21623,34 @@ var handleQuoteCheck = async (runtime2, httpClient, evm, input, config) => {
         minReserveRatioBps: BigInt(minReserveRatioBps),
         vaultBalanceUSDC: BigInt(vaultBalanceUSDC)
       },
-      nowSec: tNow,
-      geminiOrdinal,
+      tier,
+      gemini,
       pricing: config.pricing
     });
     const pricingResult = {
-      computedPayoutUSDC: pricing.computedPayoutUSDC,
-      computedPremiumUSDC: pricing.computedPremiumUSDC,
+      tier: pricing.tier,
+      payoutUSDC: pricing.payoutUSDC,
+      premiumUSDC: pricing.premiumUSDC,
       pCancelBps: pricing.pCancelBps,
       expectedLossUSDC: pricing.expectedLossUSDC,
-      reserveUtilizationBps: pricing.reserveUtilizationBps
+      reserveUtilizationBps: pricing.reserveUtilizationBps,
+      riskBands: pricing.riskBands,
+      riskBreakdownBps: pricing.riskBreakdownBps,
+      loadBreakdownBps: pricing.loadBreakdownBps
     };
-    const newLiability = BigInt(totalActiveLiabilityUSDC) + pricing.payoutUSDC;
+    if (pricing.utilizationRejected) {
+      return {
+        ok: true,
+        action: "QUOTE_CHECK",
+        quoteValid: false,
+        reason: "VAULT_UTILIZATION_TOO_HIGH",
+        event,
+        canonicalEventId: resolvedEventId,
+        pricing: pricingResult,
+        ...warnings.length > 0 ? { warnings } : {}
+      };
+    }
+    const newLiability = BigInt(totalActiveLiabilityUSDC) + pricing.payoutUSDCBigInt;
     const requiredAfter = (newLiability * BigInt(minReserveRatioBps) + 9999n) / 10000n;
     if (BigInt(vaultBalanceUSDC) < requiredAfter) {
       return {
@@ -21185,8 +21673,8 @@ var handleQuoteCheck = async (runtime2, httpClient, evm, input, config) => {
       coverageStart,
       coverageEnd,
       quoteExpiry,
-      payoutUSDC: pricing.computedPayoutUSDC,
-      premiumUSDC: pricing.computedPremiumUSDC,
+      payoutUSDC: pricing.payoutUSDC,
+      premiumUSDC: pricing.premiumUSDC,
       nonce: normalizeNonce(input.nonce ?? randomNonceHex(runtime2))
     };
     const signedQuote = await signQuote(runtime2, quote, config);
@@ -21197,7 +21685,6 @@ var handleQuoteCheck = async (runtime2, httpClient, evm, input, config) => {
       event,
       canonicalEventId: resolvedEventId,
       pricing: pricingResult,
-      ...eventNameMatch !== undefined ? { eventNameMatch } : {},
       ...warnings.length > 0 ? { warnings } : {},
       signedQuote
     };

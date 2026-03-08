@@ -52,14 +52,31 @@ const isCoinbaseFacilitator = (url: string | undefined): boolean =>
   Boolean(url && url.includes("api.cdp.coinbase.com"));
 
 const defaultNetwork = `eip155:${chainId}` as Network;
-const x402Fee = process.env.X402_FIXED_FEE_USD || process.env.NEXT_PUBLIC_X402_FIXED_FEE_USD || "0.01";
-
-const normalizedX402Price = x402Fee.startsWith("$") ? x402Fee : `$${x402Fee}`;
+const normalizeUsdPrice = (value: string): string => (value.startsWith("$") ? value : `$${value}`);
+const sharedX402Fee =
+  process.env.X402_FIXED_FEE_USD ||
+  process.env.NEXT_PUBLIC_X402_FIXED_FEE_USD ||
+  "0.01";
+const quoteX402Fee =
+  process.env.X402_QUOTE_FEE_USD ||
+  process.env.NEXT_PUBLIC_X402_QUOTE_FEE_USD ||
+  sharedX402Fee;
+const buyX402Fee =
+  process.env.X402_BUY_FEE_USD ||
+  process.env.X402_MINT_FEE_USD ||
+  process.env.NEXT_PUBLIC_X402_BUY_FEE_USD ||
+  process.env.NEXT_PUBLIC_X402_MINT_FEE_USD ||
+  sharedX402Fee;
+const claimX402Fee =
+  process.env.X402_CLAIM_FEE_USD ||
+  process.env.NEXT_PUBLIC_X402_CLAIM_FEE_USD ||
+  sharedX402Fee;
 
 const creSignerPk =
   process.env.CRE_TRIGGER_PRIVATE_KEY || process.env.CRE_HTTP_TRIGGER_SIGNER_PK || "";
 const creExecutionMode = parseExecutionMode(process.env.CRE_EXECUTION_MODE);
 const creWorkflowId = process.env.CRE_WORKFLOW_ID || "";
+const creClaimWorkflowId = process.env.CRE_CLAIM_WORKFLOW_ID || "";
 const x402FacilitatorUrl = normalizeUrl(
   process.env.X402_FACILITATOR_URL ||
     process.env.X402_FACILITATOR_BASE_URL ||
@@ -80,6 +97,7 @@ export const serverConfig = {
   creExecutionMode,
   creGatewayUrl: process.env.CRE_GATEWAY_URL || "https://01.gateway.zone-a.cre.chain.link",
   creWorkflowId,
+  creClaimWorkflowId,
   creSignerPk,
   creExecutionPollUrl: process.env.CRE_EXECUTION_POLL_URL,
   creExecutionPollMethod: process.env.CRE_EXECUTION_POLL_METHOD,
@@ -102,7 +120,9 @@ export const serverConfig = {
       process.env.X402_RECEIVER_ADDRESS ||
       process.env.NEXT_PUBLIC_POLICY_VAULT,
   ),
-  x402PriceUsd: normalizedX402Price,
+  x402QuotePriceUsd: normalizeUsdPrice(quoteX402Fee),
+  x402BuyPriceUsd: normalizeUsdPrice(buyX402Fee),
+  x402ClaimPriceUsd: normalizeUsdPrice(claimX402Fee),
   x402FacilitatorUrl,
 
   cdpApiKeyId: process.env.CDP_API_KEY_ID,

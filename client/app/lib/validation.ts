@@ -10,9 +10,26 @@ export const bytes32Schema = z
   .regex(/^0x[0-9a-fA-F]{64}$/, "must be a 32-byte hex value")
   .transform((value) => value as `0x${string}`);
 
-const numericStringSchema = z
-  .string()
-  .regex(/^\d+$/, "must be a base-10 numeric string");
+const numericStringSchema = z.string().regex(/^\d+$/, "must be a base-10 numeric string");
+
+const policyTierSchema = z.union([z.literal("BASIC"), z.literal("MEDIUM"), z.literal("ADVANCED")]);
+const geminiRiskBandSchema = z.union([z.literal("low"), z.literal("medium"), z.literal("high"), z.literal("unknown")]);
+const capacityBandSchema = z.union([
+  z.literal("<50"),
+  z.literal("50-199"),
+  z.literal("200-1000"),
+  z.literal(">1000"),
+  z.literal("unknown"),
+]);
+const venueTypeBandSchema = z.union([z.literal("online"), z.literal("offline"), z.literal("unknown")]);
+const organizerExperienceBandSchema = z.union([
+  z.literal("new"),
+  z.literal("1-2"),
+  z.literal("3-9"),
+  z.literal("10-50"),
+  z.literal(">50"),
+  z.literal("unknown"),
+]);
 
 const eventSummarySchema = z
   .object({
@@ -26,16 +43,57 @@ const eventSummarySchema = z
     eventStart: z.number().optional(),
     eventEnd: z.number().optional(),
     rawStatus: z.string().optional(),
+    categoryId: z.string().optional(),
+    categoryName: z.string().optional(),
+    subcategoryId: z.string().optional(),
+    subcategoryName: z.string().optional(),
+    organizerPastEvents: z.number().optional(),
+    organizerFutureEvents: z.number().optional(),
+    descriptionText: z.string().optional(),
+    venueName: z.string().optional(),
+    venueCity: z.string().optional(),
+    venueRegion: z.string().optional(),
+    venueCountry: z.string().optional(),
+    isSeries: z.boolean().optional(),
   })
-  .strict();
+  .passthrough();
 
 const pricingResultSchema = z
   .object({
-    computedPayoutUSDC: numericStringSchema,
-    computedPremiumUSDC: numericStringSchema,
+    tier: policyTierSchema,
+    payoutUSDC: numericStringSchema,
+    premiumUSDC: numericStringSchema,
     pCancelBps: z.number(),
     expectedLossUSDC: numericStringSchema,
     reserveUtilizationBps: z.number(),
+    riskBands: z
+      .object({
+        category: z.string(),
+        capacityBand: capacityBandSchema,
+        venueType: venueTypeBandSchema,
+        organizerExperience: organizerExperienceBandSchema,
+        venueRiskBand: geminiRiskBandSchema,
+        complexityBand: geminiRiskBandSchema,
+      })
+      .strict(),
+    riskBreakdownBps: z
+      .object({
+        category: z.number(),
+        capacity: z.number(),
+        venueType: z.number(),
+        organizer: z.number(),
+        venueRisk: z.number(),
+        complexity: z.number(),
+      })
+      .strict(),
+    loadBreakdownBps: z
+      .object({
+        expense: z.number(),
+        profit: z.number(),
+        utilization: z.number(),
+        total: z.number(),
+      })
+      .strict(),
   })
   .strict();
 
@@ -70,8 +128,8 @@ const signedQuoteSchema = z
 export const quoteRequestSchema = z
   .object({
     eventUrl: z.string().min(1),
-    eventName: z.string().min(1),
     insured: addressSchema,
+    tier: policyTierSchema,
     nonce: bytes32Schema.optional(),
   })
   .strict();
@@ -104,7 +162,6 @@ const quoteWorkflowOkSchema = z
     reason: z.string().optional(),
     event: eventSummarySchema,
     canonicalEventId: z.string().optional(),
-    eventNameMatch: z.boolean().optional(),
     pricing: pricingResultSchema.optional(),
     warnings: z.array(z.string()).optional(),
     signedQuote: signedQuoteSchema.optional(),

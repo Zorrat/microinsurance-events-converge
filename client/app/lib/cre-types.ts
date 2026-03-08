@@ -1,3 +1,9 @@
+export type PolicyTier = "BASIC" | "MEDIUM" | "ADVANCED";
+export type GeminiRiskBand = "low" | "medium" | "high" | "unknown";
+export type CapacityBand = "<50" | "50-199" | "200-1000" | ">1000" | "unknown";
+export type VenueTypeBand = "online" | "offline" | "unknown";
+export type OrganizerExperienceBand = "new" | "1-2" | "3-9" | "10-50" | ">50" | "unknown";
+
 export type Quote = {
   quoteVersion: number;
   insured: `0x${string}`;
@@ -22,8 +28,8 @@ export type SignedQuote = {
 export type QuoteCheckInput = {
   action: "QUOTE_CHECK";
   eventUrl: string;
-  eventName: string;
   insured: string;
+  tier: PolicyTier;
   nonce?: `0x${string}`;
 };
 
@@ -52,14 +58,49 @@ export type EventSummary = {
   eventStart?: number;
   eventEnd?: number;
   rawStatus?: string;
+  categoryId?: string;
+  categoryName?: string;
+  subcategoryId?: string;
+  subcategoryName?: string;
+  organizerPastEvents?: number;
+  organizerFutureEvents?: number;
+  descriptionText?: string;
+  venueName?: string;
+  venueCity?: string;
+  venueRegion?: string;
+  venueCountry?: string;
+  isSeries?: boolean;
 };
 
 export type PricingResult = {
-  computedPayoutUSDC: string;
-  computedPremiumUSDC: string;
+  tier: PolicyTier;
+  payoutUSDC: string;
+  premiumUSDC: string;
   pCancelBps: number;
   expectedLossUSDC: string;
   reserveUtilizationBps: number;
+  riskBands: {
+    category: string;
+    capacityBand: CapacityBand;
+    venueType: VenueTypeBand;
+    organizerExperience: OrganizerExperienceBand;
+    venueRiskBand: GeminiRiskBand;
+    complexityBand: GeminiRiskBand;
+  };
+  riskBreakdownBps: {
+    category: number;
+    capacity: number;
+    venueType: number;
+    organizer: number;
+    venueRisk: number;
+    complexity: number;
+  };
+  loadBreakdownBps: {
+    expense: number;
+    profit: number;
+    utilization: number;
+    total: number;
+  };
 };
 
 export type QuoteWorkflowOk = {
@@ -69,7 +110,6 @@ export type QuoteWorkflowOk = {
   reason?: string;
   event: EventSummary;
   canonicalEventId?: string;
-  eventNameMatch?: boolean;
   pricing?: PricingResult;
   warnings?: string[];
   signedQuote?: SignedQuote;
@@ -99,8 +139,4 @@ export type WorkflowError = {
   error: string;
 };
 
-export type WorkflowResult =
-  | QuoteWorkflowOk
-  | MintWorkflowOk
-  | ClaimWorkflowOk
-  | WorkflowError;
+export type WorkflowResult = QuoteWorkflowOk | MintWorkflowOk | ClaimWorkflowOk | WorkflowError;

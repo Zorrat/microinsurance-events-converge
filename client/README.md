@@ -36,6 +36,7 @@ Key variables:
 
 - `CRE_EXECUTION_MODE` (`gateway` or `simulate`)
 - `CRE_WORKFLOW_ID`
+- `CRE_CLAIM_WORKFLOW_ID` (optional override for `POST /api/claim`)
 - `CRE_TRIGGER_PRIVATE_KEY`
 - `CRE_GATEWAY_URL`
 - `X402_PAY_TO`
@@ -120,6 +121,7 @@ Use this mode when you cannot deploy workflows yet.
 - Raw CRE JSON responses are displayed unchanged in the tester.
 - `CRE_TRIGGER_PRIVATE_KEY` must map to an address configured in the workflow HTTP trigger `authorizedKeys`.
 - `CRE_WORKFLOW_ID` must be the 64-char workflow id (no `0x` prefix).
+- If `CRE_CLAIM_WORKFLOW_ID` is set, `/api/claim` uses that workflow while quote/buy keep using `CRE_WORKFLOW_ID`.
 
 ## Troubleshooting
 

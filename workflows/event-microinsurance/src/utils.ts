@@ -109,15 +109,3 @@ export const parseEventbriteEventIdFromUrl = (rawUrl: string): string => {
 
   throw new Error("INVALID_EVENTBRITE_URL");
 };
-
-export const normalizeEventName = (value: string): string => {
-  const input = typeof value === "string" ? value : String(value ?? "");
-  const maybeNormalize = (input as any).normalize;
-  const normalized = typeof maybeNormalize === "function" ? maybeNormalize.call(input, "NFKD") : input;
-
-  return normalized
-    .replace(/[^\w\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-};

@@ -7,12 +7,22 @@ type WorkflowStageCardProps = {
   title: string;
   summary: string;
   chips: string[];
+  expanded?: boolean;
+  onOpenStage?: () => void;
   children: ReactNode;
 };
 
-export function WorkflowStageCard({ step, title, summary, chips, children }: WorkflowStageCardProps) {
+export function WorkflowStageCard({
+  step,
+  title,
+  summary,
+  chips,
+  expanded = true,
+  onOpenStage,
+  children,
+}: WorkflowStageCardProps) {
   return (
-    <section className={styles.stage}>
+    <section className={`${styles.stage} ${expanded ? styles.stageExpanded : styles.stageCollapsed}`}>
       <header className={styles.stageHeader}>
         <div className={styles.stageIndex}>STEP {step}</div>
         <div>
@@ -29,7 +39,17 @@ export function WorkflowStageCard({ step, title, summary, chips, children }: Wor
         ))}
       </div>
 
-      <div className={styles.stageBody}>{children}</div>
+      {expanded ? (
+        <div className={styles.stageBody}>{children}</div>
+      ) : (
+        <div className={styles.stageCompactFooter}>
+          {onOpenStage ? (
+            <button type="button" className={styles.stageOpenButton} onClick={onOpenStage}>
+              Open stage
+            </button>
+          ) : null}
+        </div>
+      )}
     </section>
   );
 }

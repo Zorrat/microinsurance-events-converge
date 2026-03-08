@@ -3,7 +3,8 @@ const http = require("http");
 const mode = process.env.MOCK_MODE || "live_future"; // canceled | live_future | live_past
 
 http.createServer((req, res) => {
-    const m = req.url.match(/^\/v3\/events\/([^/]+)\/?$/);
+    const path = (req.url || "").split("?")[0];
+    const m = path.match(/^\/v3\/events\/([^/]+)\/?$/);
     if (!m) {
         res.writeHead(404, { "content-type": "application/json" });
         return res.end(JSON.stringify({ error: "not found" }));
