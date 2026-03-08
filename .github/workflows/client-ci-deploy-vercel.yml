@@ -1,0 +1,126 @@
+name: Client CI + Deploy (Vercel)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "client/**"
+      - "workflows/event-microinsurance/**"
+      - "workflows/project.yaml"
+      - ".github/workflows/client-ci-deploy-vercel.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-vercel-production
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build client
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      CRE_EXECUTION_MODE: "simulate"
+      X402_PAY_TO: "0x0000000000000000000000000000000000000001"
+      # Use non-Coinbase URL in CI build so CDP keys are not required.
+      X402_FACILITATOR_URL: "https://example.com/x402"
+      CRE_LOCAL_PROJECT_ROOT: "./.cre/workflows"
+      CRE_LOCAL_WORKFLOW_PATH: "./event-microinsurance"
+      CRE_LOCAL_ENV_FROM_PROCESS: "true"
+      CRE_LOCAL_CLI_BIN: "./.cre/bin/cre"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Stage CRE workflow assets
+        run: npm run prepare:cre:sim-assets
+
+      - name: Build
+        run: npm run build
+
+  deploy:
+    name: Deploy to Vercel
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Stage CRE workflow assets
+        run: npm run prepare:cre:sim-assets
+
+      - name: Install CRE CLI binary for runtime simulation
+        run: |
+          set -euo pipefail
+          curl -sSL https://cre.chain.link/install.sh | sh
+          CRE_BIN="$(command -v cre || true)"
+          if [ -z "$CRE_BIN" ] && [ -x "$HOME/.local/bin/cre" ]; then
+            CRE_BIN="$HOME/.local/bin/cre"
+          fi
+          if [ -z "$CRE_BIN" ]; then
+            echo "CRE CLI install failed: cre binary not found"
+            exit 1
+          fi
+          mkdir -p ./.cre/bin
+          cp "$CRE_BIN" ./.cre/bin/cre
+          chmod +x ./.cre/bin/cre
+          ./.cre/bin/cre --version
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build Vercel artifact
+        env:
+          CRE_EXECUTION_MODE: "simulate"
+          CRE_LOCAL_PROJECT_ROOT: "./.cre/workflows"
+          CRE_LOCAL_WORKFLOW_PATH: "./event-microinsurance"
+          CRE_LOCAL_ENV_FROM_PROCESS: "true"
+          CRE_LOCAL_CLI_BIN: "./.cre/bin/cre"
+          X402_PAY_TO: "0x0000000000000000000000000000000000000001"
+          X402_FACILITATOR_URL: "https://example.com/x402"
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Deploy prebuilt artifact
+        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"

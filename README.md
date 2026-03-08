@@ -136,6 +136,15 @@ npm install
 npm run dev
 ```
 
+### 4. Hosted Deploy (Vercel + GitHub Actions)
+
+For low-cost hosted deployment of the Next.js app:
+
+- GitHub Actions workflow: `.github/workflows/client-ci-deploy-vercel.yml`
+- Deployment guide: `client/README.md` -> `Production Publish (Vercel + GitHub Actions)`
+
+This deployment workflow supports hosted `CRE_EXECUTION_MODE=simulate` by bundling CRE simulation assets and CLI for Vercel runtime execution.
+
 ---
 
 ## 🤝 Contributing
