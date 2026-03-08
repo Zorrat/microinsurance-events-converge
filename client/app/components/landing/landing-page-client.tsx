@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import Image, { type ImageProps } from "next/image";
 import Link from "next/link";
 
 import { Card, CardBody, Divider } from "@heroui/react";
@@ -8,11 +8,12 @@ import { Card, CardBody, Divider } from "@heroui/react";
 import { ParticleCursorField } from "@/app/components/landing/particle-cursor-field";
 import { SectionHeader } from "@/app/components/landing/section-header";
 import { config } from "@/app/lib/config";
+import arcdiag from "@/arcdiag.png";
 
 import styles from "@/app/page.module.css";
 
 type SectionIllustration = {
-  src: string;
+  src: ImageProps["src"];
   alt: string;
   caption: string;
   priority?: boolean;
@@ -36,7 +37,7 @@ const sectionIllustrations = {
     caption: "Quote terms, mint policy, settle outcome.",
   },
   tech: {
-    src: "/illustrations/decentralized-data-points.svg",
+    src: arcdiag,
     alt: "Network-style visualization for open onchain state",
     caption: "No hidden mutable backend policy ledger deciding outcomes.",
   },
@@ -141,6 +142,8 @@ const workflowSteps = [
   },
 ] as const;
 
+const HOW_IT_HITS_VIDEO_EMBED_URL = "https://www.youtube.com/embed/QnkSvXrcPig";
+
 function SectionVisualCard({ illustration }: { illustration: SectionIllustration }) {
   return (
     <figure className={styles.sectionVisualCard}>
@@ -153,6 +156,25 @@ function SectionVisualCard({ illustration }: { illustration: SectionIllustration
         priority={Boolean(illustration.priority)}
       />
       <figcaption className={styles.sectionVisualCaption}>{illustration.caption}</figcaption>
+    </figure>
+  );
+}
+
+function SectionVideoCard({ embedUrl, caption }: { embedUrl: string; caption: string }) {
+  return (
+    <figure className={styles.sectionVisualCard}>
+      <div className={styles.sectionVideoFrame}>
+        <iframe
+          src={embedUrl}
+          title="CoverFi How It Hits Demo Video"
+          className={styles.sectionVideoEmbed}
+          loading="lazy"
+          referrerPolicy="strict-origin-when-cross-origin"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+        />
+      </div>
+      <figcaption className={styles.sectionVisualCaption}>{caption}</figcaption>
     </figure>
   );
 }
@@ -238,7 +260,10 @@ export function LandingPageClient() {
               </div>
             </div>
 
-            <SectionVisualCard illustration={sectionIllustrations.protocol} />
+            <SectionVideoCard
+              embedUrl={HOW_IT_HITS_VIDEO_EMBED_URL}
+              caption="Watch the CoverFi quote-to-claim flow in action."
+            />
           </div>
         </section>
 

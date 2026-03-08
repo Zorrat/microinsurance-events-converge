@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { access, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { promisify } from "node:util";
 import path from "node:path";
 
@@ -23,6 +26,8 @@ const enqueue = <T>(task: () => Promise<T>): Promise<T> => {
 };
 
 const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;]*m/g, "");
+
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const extractResultJson = (stdout: string): unknown | null => {
   const normalized = stripAnsi(stdout);
@@ -62,9 +67,81 @@ const extractResultJson = (stdout: string): unknown | null => {
   return null;
 };
 
+type PreparedEnvFile =
+  | { ok: true; envFile: string; cleanup: () => Promise<void> }
+  | { ok: false; error: string };
+
+const escapeEnvValue = (value: string): string => JSON.stringify(value);
+
+const prepareRuntimeEnvFile = async (): Promise<PreparedEnvFile> => {
+  const required = ["EVENTBRITE_API_TOKEN", "QUOTE_SIGNER_PK"];
+  if (serverConfig.creLocalBroadcast) {
+    required.push("CRE_ETH_PRIVATE_KEY");
+  }
+
+  const missing = required.filter((name) => !process.env[name]);
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      error: `CRE_TRIGGER_FAILED:SIMULATION_MISSING_ENV:${missing.join(",")}`,
+    };
+  }
+
+  const lines: string[] = [];
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!ENV_KEY_PATTERN.test(key)) continue;
+    if (typeof value !== "string") continue;
+    lines.push(`${key}=${escapeEnvValue(value)}`);
+  }
+
+  const envFile = path.join(os.tmpdir(), `cre-sim-${randomUUID()}.env`);
+  try {
+    await writeFile(envFile, `${lines.join("\n")}\n`, { encoding: "utf8", mode: 0o600 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `CRE_TRIGGER_FAILED:SIMULATION_ENV_WRITE_ERROR:${message}` };
+  }
+
+  return {
+    ok: true,
+    envFile,
+    cleanup: async () => {
+      try {
+        await unlink(envFile);
+      } catch {
+        // ignore cleanup failures
+      }
+    },
+  };
+};
+
+const prepareSimulationEnvFile = async (): Promise<PreparedEnvFile> => {
+  if (serverConfig.creLocalEnvFromProcess || !serverConfig.creLocalEnvFile) {
+    return prepareRuntimeEnvFile();
+  }
+
+  const envFile = path.resolve(process.cwd(), serverConfig.creLocalEnvFile);
+  try {
+    await access(envFile);
+  } catch {
+    return { ok: false, error: `CRE_TRIGGER_FAILED:SIMULATION_ENV_FILE_NOT_FOUND:${envFile}` };
+  }
+
+  return { ok: true, envFile, cleanup: async () => undefined };
+};
+
+const resolveCliBin = (value: string): string => {
+  if (!value.includes("/") && !value.includes("\\")) return value;
+  return path.resolve(process.cwd(), value);
+};
+
 const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
   const projectRoot = path.resolve(process.cwd(), serverConfig.creLocalProjectRoot);
-  const envFile = path.resolve(process.cwd(), serverConfig.creLocalEnvFile);
+  const cliBin = resolveCliBin(serverConfig.creLocalCliBin);
+  const preparedEnv = await prepareSimulationEnvFile();
+  if (!preparedEnv.ok) return asError(preparedEnv.error);
+
+  const { envFile, cleanup } = preparedEnv;
 
   const args = [
     "workflow",
@@ -87,7 +164,7 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
   }
 
   try {
-    const { stdout } = await execFileAsync(serverConfig.creLocalCliBin, args, {
+    const { stdout } = await execFileAsync(cliBin, args, {
       cwd: process.cwd(),
       timeout: serverConfig.creLocalTimeoutMs,
       maxBuffer: serverConfig.creLocalMaxBufferBytes,
@@ -124,6 +201,8 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
 
     const message = execError.message || String(error);
     return asError(`CRE_TRIGGER_FAILED:SIMULATION_EXEC_ERROR:${message}`);
+  } finally {
+    await cleanup();
   }
 };
 

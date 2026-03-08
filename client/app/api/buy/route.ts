@@ -7,6 +7,7 @@ import { executeWorkflow } from "@/app/lib/server/cre-client";
 import { buyRouteConfig, x402Server } from "@/app/lib/server/x402";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 type BuyRouteResponse = MintWorkflowOk | WorkflowError;
 const toStatusCode = (result: BuyRouteResponse): number => {

@@ -1,9 +1,9 @@
 <div align="center">
   <h1>CoverFi</h1>
-  <p><strong>Decentralized Event Cancellation Micro-Insurance</strong></p>
+  <p><strong>Protect your event budget onchain.</strong></p>
   <p>
     Powered by <strong>Chainlink CRE</strong>, <strong>x402 Micropayments</strong>, <strong>USDC</strong>, and <strong>Gemini AI</strong>.<br/>
-    Built for the Chainlink Converge Hackathon.
+    Built for the Chainlink Convergence Hackathon.
   </p>
 </div>
 
@@ -18,20 +18,26 @@
 
 ## 🚀 Overview
 
-**CoverFi** provides transparent, programmatic micro-insurance for real-world and online events. 
-Users submit an event link (e.g., Luma, Eventbrite), receive an instant premium quote, purchase a non-transferable **Soulbound Policy NFT**, and receive automated USDC payouts if the event is canceled. 
+**Protect your event budget onchain.**
+Quote it. Mint it. Claim it. If your event gets canceled, your coverage settles transparently on Base Sepolia.
 
-No hidden databases. No opaque underwriting. All critical state and logic are enforced directly onchain.
+Don't just gamble, insure. Protect against event risk without betting on outcomes. Built for indie organizers, collectives, and creator crews.
 
-### ⚡ The Problem
-Event organizers, sponsors, and attendees frequently face financial loss when events are abruptly canceled. Traditional insurance is slow to process claims, burdened with manual verification, opaque in its pricing, and has high minimum premiums that lock out smaller, niche events.
+### ⚡ How It Hits (Fast cover flow for real-world event risk)
+No giant process deck. Just clear terms before the event, wallet-owned policy state during, and deterministic settlement after.
+- **Before event:** Lock your numbers. Get premium + payout terms up front so your downside is clear before doors open.
+- **During event:** Hold active cover. Mint your policy NFT and keep your cover state tied to your wallet, not a hidden backend row.
+- **After event:** Settle onchain. If cancellation rules hit, settlement routes to payout. If not, liability resolves cleanly.
 
-### 💡 The Solution
-We've built a single-workflow protocol that solves this:
-- **Instant Quotes:** Request coverage with just an event link.
-- **Pay-Per-Action (x402):** API endpoints are gated and metered via x402. Quotes and claims consume micro-fees.
-- **AI-Powered Risk Assessment:** Gemini analyzes qualitative venue data and event complexity to feed a dynamic pricing model.
-- **Deterministic Settlement:** Chainlink Cross-Chain Relay (CRE) verifies event status. If canceled, the Chainlink DON automatically settles the claim directly to the Policy NFT holder.
+### 💡 Who It Is For
+Made for people actually running events (Independent promoters, Wedding and private event planners, Community festival crews).
+If your crew fronts money before showtime, this helps cap cancellation downside for venue deposits, artist retainers, and paid marketing campaigns.
+
+### 🔍 Stack Spotlight
+CoverFi is designed for AI-agent use: deterministic paid APIs, verifiable workflow execution, and onchain settlement. No black-box backend state deciding policy outcomes.
+- **x402 (Primary Access Rail):** Paid endpoint access for quote, mint, and claim so usage is machine-readable, metered, and agent-friendly.
+- **Chainlink CRE (Primary Execution Layer):** Orchestrates deterministic quote/mint/claim actions and delivers signed reports into onchain settlement paths.
+- **AI + Pricing Engine:** Blends AI risk signals with deterministic pricing math to produce fair premium and payout quotes.
 
 ---
 
@@ -39,56 +45,7 @@ We've built a single-workflow protocol that solves this:
 
 CoverFi is built around a single Chainlink CRE workflow that acts as the orchestrator, communicating with smart contracts strictly through a Forwarder.
 
-```mermaid
-flowchart LR
-    %% Styles matching the reference dark aesthetic
-    classDef client fill:#1E1E1E,stroke:#444,stroke-width:2px,color:#fff;
-    classDef creWorkflow fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#fff;
-    classDef aiAgent fill:#0A0A0A,stroke:#1e3a8a,stroke-width:2px,color:#fff;
-    classDef report fill:#14532d,stroke:#4ade80,stroke-width:2px,color:#fff;
-    classDef receiver fill:#4c1d95,stroke:#c084fc,stroke-width:2px,color:#fff;
-    classDef registry fill:#1a1a1a,stroke:#E0E0E0,stroke-width:1px,color:#fff;
-    classDef vault fill:#1a1a1a,stroke:#E0E0E0,stroke-width:1px,color:#fff;
-    
-    subgraph ClientLayer ["Client Interface"]
-        direction TB
-        User["🦊 User + Wallet"]:::client
-        dApp["💻 CoverFi dApp\n(Next.js x402)"]:::client
-        User -->|"Signs tx /\nPays x402 Fee"| dApp
-    end
-
-    subgraph CRELayer ["Gemini AI & Off-Chain Automation"]
-        direction TB
-        subgraph Agents ["Information & Intelligence"]
-            direction LR
-            Gemini["🧠 Gemini AI \n(Venue/Complexity)"]:::aiAgent
-            Luma["🌐 Event API \n(Status Validation)"]:::aiAgent
-        end
-        Workflow["Chainlink CRE\nCoverFi Workflow\n(Off-chain Orchestration)\ntrigger: /quote, /mint, /claim"]:::creWorkflow
-        Gemini <-->|"Provide Context"| Workflow
-        Luma <--> Workflow
-    end
-
-    dApp -->|"Requests via x402"| Workflow
-
-    Report["📜 CRE Report\n(DON Signed)"]:::report
-    Workflow -->|"Generates Payload"| Report
-
-    subgraph OnchainLayer ["Base Sepolia (On-Chain Execution)"]
-        direction TB
-        CREReceiver["⚙️ CREReceiver Contract\nConsumes CRE Report"]:::receiver
-        PolicyNFT["🎟️ PolicyNFT (ERC721)\nStores Active, Paid,\nResolved statuses\n(Soulbound)"]:::registry
-        PolicyVault["🏦 PolicyVault\nHolds USDC Reserves\nChecks Solvency (Reserve Ratio)"]:::vault
-        
-        CREReceiver -->|"If mint: mintPolicy()\nIf claim: state transition"| PolicyNFT
-        CREReceiver -->|"If claim: routes settlement\nLocks USDC deposit"| PolicyVault
-        PolicyNFT -.->|"Reads liability"| PolicyVault
-    end
-
-    Report -->|"tx: onReport()\nForwarder-gated"| CREReceiver
-    User -.->|"Reads Coverage Status"| PolicyNFT
-    PolicyVault -->|"Transfers Claim USDC"| User
-```
+![CoverFi Architecture Diagram](client/archdiag.png)
 
 ### Onchain Contracts (Base Sepolia)
 - **PolicyNFT (ERC721):** Soulbound policy records. Transfer and approval paths are disabled. Mints and state transitions (ACTIVE → PAID / RESOLVED) are gatekept.
@@ -187,10 +144,10 @@ We welcome contributions! As a hackathon project, we embrace rapid iteration and
 ---
 
 ## 🛡 Disclaimer
-CoverFi is a hackathon prototype built for educational and demonstrative purposes within the Chainlink Converge hackathon. It is not audited and should not be used in production with real funds. 
+CoverFi is a hackathon prototype built for educational and demonstrative purposes within the Chainlink Convergence hackathon. It is not audited and should not be used in production with real funds. 
 
 ---
 
 <div align="center">
-  Built with 💙 for <b>Chainlink Converge</b>
+  Built with 💙 for <b>Chainlink Convergence</b>
 </div>

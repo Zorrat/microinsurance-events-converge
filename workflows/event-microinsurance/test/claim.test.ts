@@ -143,6 +143,42 @@ const mkPolicy = (status: number, coverageEnd: bigint, eventId = EVENT_ID): Poli
 });
 
 describe("claim guard behavior", () => {
+  it("claimAutoApprove submits PAY report without policy/event prechecks", async () => {
+    const counters = { writes: 0, eventFetches: 0 };
+    const evm = {
+      callContract: () => ({
+        result: () => {
+          throw new Error("callContract should not be used when claimAutoApprove is enabled");
+        },
+      }),
+      writeReport: () => ({
+        result: () => {
+          counters.writes += 1;
+          return { txHash: hexToBytes(`0x${"34".repeat(32)}`) };
+        },
+      }),
+    } as unknown as EVMClient;
+    const http = mkHttpClient({
+      counters,
+      eventPayload: { id: EVENT_ID, status: "live" },
+    });
+    const runtime = mkRuntime("2033-05-18T09:00:00Z");
+
+    const result = await handleClaim(
+      runtime,
+      http,
+      evm,
+      { action: "CLAIM", policyId: POLICY_ID, eventId: EVENT_ID },
+      { ...baseConfig, claimAutoApprove: true },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.action !== "CLAIM") throw new Error("unexpected result type");
+    expect(result.decision).toBe("PAY");
+    expect(counters.eventFetches).toBe(0);
+    expect(counters.writes).toBe(1);
+  });
+
   it("keeps ACTIVE policy claim checks working when event is not canceled and not ended", async () => {
     const counters = { writes: 0, eventFetches: 0 };
     const evm = mkEvmClient(mkPolicy(1, 2_000_000_000n), counters);

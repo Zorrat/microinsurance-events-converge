@@ -7,6 +7,7 @@ import { executeWorkflow } from "@/app/lib/server/cre-client";
 import { quoteRouteConfig, x402Server } from "@/app/lib/server/x402";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 type QuoteRouteResponse = QuoteWorkflowOk | WorkflowError;
 const toStatusCode = (result: QuoteRouteResponse): number => {

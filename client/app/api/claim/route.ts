@@ -8,6 +8,7 @@ import { serverConfig } from "@/app/lib/server/env";
 import { claimRouteConfig, x402Server } from "@/app/lib/server/x402";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 type ClaimRouteResponse = ClaimWorkflowOk | WorkflowError;
 const toStatusCode = (result: ClaimRouteResponse): number => {

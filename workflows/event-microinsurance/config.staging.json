@@ -11,6 +11,7 @@
   ],
   "eventbriteApiBaseUrl": "https://www.eventbriteapi.com/v3",
   "claimEventbriteApiBaseUrl": "http://127.0.0.1:8787/v3",
+  "claimAutoApprove": true,
   "eventbriteApiTokenSecretName": "EVENTBRITE_API_TOKEN",
   "secretsNamespace": "env",
   "quoteSignerPrivateKeySecretName": "QUOTE_SIGNER_PK",

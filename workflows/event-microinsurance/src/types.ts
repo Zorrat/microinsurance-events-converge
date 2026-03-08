@@ -13,6 +13,7 @@ export type Config = {
 
   eventbriteApiBaseUrl: string;
   claimEventbriteApiBaseUrl?: string;
+  claimAutoApprove?: boolean;
   eventbriteApiTokenSecretName: string;
   quoteSignerPrivateKeySecretName: string;
 

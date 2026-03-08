@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "prepare:cre:sim-assets": "bash ./scripts/prepare-cre-sim-assets.sh",
     "start": "next start",
     "lint": "eslint"
   },

@@ -26,6 +26,32 @@ export const handleClaim = async (
     const receiver = mustHexAddress(config.receiver, "receiver");
     const policyId = BigInt(input.policyId.trim());
     const submittedEventId = input.eventId.trim();
+
+    // Demo-only bypass: submit PAY directly from policyId without policy/event prechecks.
+    if (config.claimAutoApprove === true) {
+      runtime.log("[CLAIM] claimAutoApprove enabled: bypassing policy/event checks and submitting PAY report");
+      const reportBytes = encodeReportBytes({ action: 1, policyId, mint: emptyMintData() });
+      const report = runtime.report(prepareReportRequest(reportBytes)).result();
+      const write = evm
+        .writeReport(runtime, {
+          receiver,
+          report,
+          gasConfig: { gasLimit: "800000" },
+        })
+        .result();
+
+      const txHash = write.txHash ? bytesToHex(write.txHash) : undefined;
+      runtime.log(`[CLAIM] claimAutoApprove submitted txHash=${txHash ?? "n/a"}`);
+      return {
+        ok: true,
+        action: "CLAIM",
+        decision: "PAY",
+        ...(txHash ? { txHash } : {}),
+        note: "Demo bypass enabled: submitted PAY report without claim prechecks.",
+        event: { eventId: submittedEventId },
+      };
+    }
+
     const receiverReadData = encodeFunctionData({
       abi: CREReceiverABI,
       functionName: "policyNft",

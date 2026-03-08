@@ -15,6 +15,8 @@ const parseExecutionMode = (value: string | undefined): CreExecutionMode => {
   return "gateway";
 };
 
+const isVercelRuntime = process.env.VERCEL === "1" || process.env.VERCEL === "true";
+
 const rawChainId = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 84532);
 const chainId = Number.isFinite(rawChainId) ? rawChainId : 84532;
 const toPositiveInt = (value: string | undefined, fallback: number): number => {
@@ -77,6 +79,9 @@ const creSignerPk =
 const creExecutionMode = parseExecutionMode(process.env.CRE_EXECUTION_MODE);
 const creWorkflowId = process.env.CRE_WORKFLOW_ID || "";
 const creClaimWorkflowId = process.env.CRE_CLAIM_WORKFLOW_ID || "";
+const defaultLocalCliBin = isVercelRuntime ? "./.cre/bin/cre" : "cre";
+const defaultLocalProjectRoot = isVercelRuntime ? "./.cre/workflows" : "../workflows";
+const defaultLocalEnvFile = isVercelRuntime ? "" : "../workflows/.env";
 const x402FacilitatorUrl = normalizeUrl(
   process.env.X402_FACILITATOR_URL ||
     process.env.X402_FACILITATOR_BASE_URL ||
@@ -103,10 +108,11 @@ export const serverConfig = {
   creExecutionPollMethod: process.env.CRE_EXECUTION_POLL_METHOD,
   crePollMaxMs: toPositiveInt(process.env.CRE_POLL_MAX_MS, 8000),
   crePollIntervalMs: toPositiveInt(process.env.CRE_POLL_INTERVAL_MS, 1000),
-  creLocalCliBin: process.env.CRE_LOCAL_CLI_BIN || "cre",
-  creLocalProjectRoot: process.env.CRE_LOCAL_PROJECT_ROOT || "../workflows",
+  creLocalCliBin: process.env.CRE_LOCAL_CLI_BIN || defaultLocalCliBin,
+  creLocalProjectRoot: process.env.CRE_LOCAL_PROJECT_ROOT || defaultLocalProjectRoot,
   creLocalWorkflowPath: process.env.CRE_LOCAL_WORKFLOW_PATH || "./event-microinsurance",
-  creLocalEnvFile: process.env.CRE_LOCAL_ENV_FILE || "../workflows/.env",
+  creLocalEnvFile: process.env.CRE_LOCAL_ENV_FILE || defaultLocalEnvFile,
+  creLocalEnvFromProcess: toBoolean(process.env.CRE_LOCAL_ENV_FROM_PROCESS, isVercelRuntime),
   creLocalTarget: process.env.CRE_LOCAL_TARGET || "staging-settings",
   creLocalTriggerIndex: toPositiveInt(process.env.CRE_LOCAL_TRIGGER_INDEX, 0),
   creLocalBroadcast: toBoolean(process.env.CRE_LOCAL_BROADCAST, true),
