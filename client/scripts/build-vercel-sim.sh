@@ -7,6 +7,14 @@ ldd --version || true
 
 npm run prepare:cre:sim-assets
 
+WORKFLOW_STAGE_DIR="./.cre/workflows/event-microinsurance"
+if [ -f "$WORKFLOW_STAGE_DIR/package-lock.json" ]; then
+  echo "[cre-build] Installing staged workflow dependencies into $WORKFLOW_STAGE_DIR"
+  npm ci --omit=dev --ignore-scripts --prefix "$WORKFLOW_STAGE_DIR"
+else
+  echo "[cre-build] Skipped workflow dependency install: package-lock.json not found at $WORKFLOW_STAGE_DIR"
+fi
+
 export PATH="$HOME/.cre:$HOME/.cre/bin:$HOME/.local/bin:$PATH"
 
 CRE_VERSION_CANDIDATES=(v1.3.0 v1.2.0 v1.1.0 v1.0.10)

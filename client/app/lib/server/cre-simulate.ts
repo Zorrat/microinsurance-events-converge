@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, unlink, writeFile } from "node:fs/promises";
+import { access, constants as fsConstants, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -26,6 +26,13 @@ const enqueue = <T>(task: () => Promise<T>): Promise<T> => {
 };
 
 const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;]*m/g, "");
+const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, " ").trim();
+const toSnippet = (value: string, max = 320): string => {
+  const normalized = normalizeWhitespace(stripAnsi(value));
+  if (!normalized) return "";
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max)}...`;
+};
 
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -130,6 +137,30 @@ const prepareSimulationEnvFile = async (): Promise<PreparedEnvFile> => {
   return { ok: true, envFile, cleanup: async () => undefined };
 };
 
+const ensureSimulationPaths = async (projectRoot: string, workflowPath: string): Promise<string | null> => {
+  try {
+    await access(projectRoot, fsConstants.R_OK);
+  } catch {
+    return `CRE_TRIGGER_FAILED:SIMULATION_PATH_NOT_FOUND:PROJECT_ROOT:${projectRoot}`;
+  }
+
+  const workflowRoot = path.resolve(projectRoot, workflowPath);
+  try {
+    await access(workflowRoot, fsConstants.R_OK);
+  } catch {
+    return `CRE_TRIGGER_FAILED:SIMULATION_PATH_NOT_FOUND:WORKFLOW:${workflowRoot}`;
+  }
+
+  const projectYaml = path.resolve(projectRoot, "project.yaml");
+  try {
+    await access(projectYaml, fsConstants.R_OK);
+  } catch {
+    return `CRE_TRIGGER_FAILED:SIMULATION_PATH_NOT_FOUND:PROJECT_YAML:${projectYaml}`;
+  }
+
+  return null;
+};
+
 const resolveCliBin = (value: string): string => {
   if (!value.includes("/") && !value.includes("\\")) return value;
   return path.resolve(process.cwd(), value);
@@ -157,6 +188,9 @@ const buildCliCandidates = (configured: string): string[] => {
 const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
   const projectRoot = path.resolve(process.cwd(), serverConfig.creLocalProjectRoot);
   const cliCandidates = buildCliCandidates(serverConfig.creLocalCliBin);
+  const pathError = await ensureSimulationPaths(projectRoot, serverConfig.creLocalWorkflowPath);
+  if (pathError) return asError(pathError);
+
   const preparedEnv = await prepareSimulationEnvFile();
   if (!preparedEnv.ok) return asError(preparedEnv.error);
 
@@ -200,8 +234,14 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
 
         return validated.data;
       } catch (error) {
-        const execError = error as NodeJS.ErrnoException & { killed?: boolean; signal?: string; stdout?: string };
+        const execError = error as NodeJS.ErrnoException & {
+          killed?: boolean;
+          signal?: string;
+          stdout?: string;
+          stderr?: string;
+        };
         const maybeStdout = execError.stdout ? String(execError.stdout) : "";
+        const maybeStderr = execError.stderr ? String(execError.stderr) : "";
         const parsed = maybeStdout ? extractResultJson(maybeStdout) : null;
         if (parsed) {
           const validated = workflowResultSchema.safeParse(parsed);
@@ -216,11 +256,19 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
           return asError("CRE_TRIGGER_FAILED:SIMULATION_TIMEOUT");
         }
 
+        const stderrSnippet = toSnippet(maybeStderr);
+        const stdoutSnippet = toSnippet(maybeStdout);
+        const details = [stderrSnippet, stdoutSnippet].filter(Boolean).join(" | ");
+
         if (typeof execError.code === "number") {
+          if (details) {
+            return asError(`CRE_TRIGGER_FAILED:SIMULATION_EXIT_${execError.code}:${details}`);
+          }
           return asError(`CRE_TRIGGER_FAILED:SIMULATION_EXIT_${execError.code}`);
         }
 
-        const message = execError.message || String(error);
+        const baseMessage = execError.message || String(error);
+        const message = details ? `${baseMessage}:${details}` : baseMessage;
         return asError(`CRE_TRIGGER_FAILED:SIMULATION_EXEC_ERROR:${message}`);
       }
     }
