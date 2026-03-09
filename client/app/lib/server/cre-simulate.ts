@@ -221,6 +221,15 @@ const resolveCliBin = (value: string): string => {
   return path.resolve(process.cwd(), value);
 };
 
+const prependPath = (env: NodeJS.ProcessEnv, dir: string): NodeJS.ProcessEnv => {
+  const currentPath = env.PATH || process.env.PATH || "";
+  const parts = currentPath ? currentPath.split(path.delimiter).filter(Boolean) : [];
+  if (!parts.includes(dir)) {
+    parts.unshift(dir);
+  }
+  return { ...env, PATH: parts.join(path.delimiter) };
+};
+
 const buildCliCandidates = (configured: string): string[] => {
   const candidates: string[] = [];
   const pushUnique = (value: string | undefined) => {
@@ -241,16 +250,72 @@ const buildCliCandidates = (configured: string): string[] => {
 };
 
 const withLocalToolPath = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
-  const localBinDir = path.resolve(process.cwd(), ".cre/bin");
-  const currentPath = env.PATH || process.env.PATH || "";
-  const segments = currentPath ? currentPath.split(path.delimiter).filter(Boolean) : [];
-  if (!segments.includes(localBinDir)) {
-    segments.unshift(localBinDir);
+  return prependPath(env, path.resolve(process.cwd(), ".cre/bin"));
+};
+
+const isExecutable = async (candidate: string): Promise<boolean> => {
+  try {
+    await access(candidate, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
   }
-  return {
-    ...env,
-    PATH: segments.join(path.delimiter),
-  };
+};
+
+const findExecutableInPath = async (binName: string, env: NodeJS.ProcessEnv): Promise<string | null> => {
+  const currentPath = env.PATH || process.env.PATH || "";
+  const dirs = currentPath.split(path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    const candidate = path.join(dir, binName);
+    if (await isExecutable(candidate)) return candidate;
+  }
+  return null;
+};
+
+const installBunRuntime = async (env: NodeJS.ProcessEnv): Promise<{ ok: true; env: NodeJS.ProcessEnv } | { ok: false; error: string }> => {
+  const bunInstallRoot = path.join(os.tmpdir(), "cre-bun-runtime");
+  const bunBinDir = path.join(bunInstallRoot, "bin");
+  const bunBinary = path.join(bunBinDir, "bun");
+
+  if (await isExecutable(bunBinary)) {
+    return { ok: true, env: prependPath(env, bunBinDir) };
+  }
+
+  const installEnv = prependPath({ ...env, BUN_INSTALL: bunInstallRoot }, bunBinDir);
+  try {
+    await execFileAsync("bash", ["-lc", "set -euo pipefail; curl -fsSL https://bun.sh/install | bash"], {
+      cwd: process.cwd(),
+      env: installEnv,
+      timeout: 180000,
+      maxBuffer: serverConfig.creLocalMaxBufferBytes,
+      windowsHide: true,
+    });
+  } catch (error) {
+    const execError = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+    const details = [toSnippet(String(execError.stderr || "")), toSnippet(String(execError.stdout || ""))]
+      .filter(Boolean)
+      .join(" | ");
+    if (details) {
+      return { ok: false, error: `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_INSTALL:${details}` };
+    }
+    return { ok: false, error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_INSTALL" };
+  }
+
+  if (!(await isExecutable(bunBinary))) {
+    return { ok: false, error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NOT_FOUND_AFTER_INSTALL" };
+  }
+
+  return { ok: true, env: prependPath(env, bunBinDir) };
+};
+
+const prepareExecutionEnv = async (
+  env: NodeJS.ProcessEnv,
+): Promise<{ ok: true; env: NodeJS.ProcessEnv } | { ok: false; error: string }> => {
+  const withLocalPath = withLocalToolPath(env);
+  if (await findExecutableInPath("bun", withLocalPath)) {
+    return { ok: true, env: withLocalPath };
+  }
+  return installBunRuntime(withLocalPath);
 };
 
 const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
@@ -269,7 +334,13 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
 
   const { envFile, cleanup } = preparedEnv;
   const { env: cliEnv, cleanup: cleanupCliHome } = preparedCliHome;
-  const execEnv = withLocalToolPath(cliEnv);
+  const preparedExecEnv = await prepareExecutionEnv(cliEnv);
+  if (!preparedExecEnv.ok) {
+    await cleanupCliHome();
+    await cleanup();
+    return asError(preparedExecEnv.error);
+  }
+  const execEnv = preparedExecEnv.env;
 
   const args = [
     "workflow",

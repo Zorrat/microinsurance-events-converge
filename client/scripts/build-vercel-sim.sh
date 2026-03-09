@@ -45,33 +45,9 @@ record_attempt() {
 }
 
 ensure_bun_runtime() {
-  local bun_bin
-  bun_bin="$(command -v bun || true)"
-
-  if [ -z "$bun_bin" ]; then
-    record_attempt "Installing Bun runtime for hosted TypeScript workflow compilation"
-    if ! curl -fsSL https://bun.sh/install | bash; then
-      record_attempt "Bun installer command failed"
-      return 1
-    fi
-    export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
-    export PATH="$BUN_INSTALL/bin:$PATH"
-    bun_bin="$(command -v bun || true)"
-  fi
-
-  if [ -z "$bun_bin" ] && [ -x "$HOME/.bun/bin/bun" ]; then
-    bun_bin="$HOME/.bun/bin/bun"
-  fi
-
-  if [ -z "$bun_bin" ]; then
-    record_attempt "Bun runtime not found after installation"
-    return 1
-  fi
-
-  mkdir -p ./.cre/bin
-  cp "$bun_bin" ./.cre/bin/bun
-  chmod +x ./.cre/bin/bun
-  log "Bundled Bun runtime: $(./.cre/bin/bun --version)"
+  # Bun is not bundled into the serverless artifact because of package-size limits.
+  # Runtime setup in cre-simulate.ts installs Bun into /tmp on first cold start if missing.
+  log "Skipping Bun bundling in build (runtime installs Bun on-demand in /tmp)"
   return 0
 }
 
@@ -288,6 +264,8 @@ if ! ensure_bun_runtime; then
 fi
 
 mkdir -p ./.cre/bin
+# Ensure Bun is not bundled into deployment artifact (runtime installs it on-demand in /tmp).
+rm -f ./.cre/bin/bun ./.cre/bin/bun.exe
 if [ "$CRE_NEEDS_EXTRA_LIBSTDCPP" = "true" ]; then
   cp "$CRE_BIN" ./.cre/bin/cre.real
   chmod +x ./.cre/bin/cre.real
