@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, constants as fsConstants, mkdir, rm, unlink, writeFile } from "node:fs/promises";
+import { access, constants as fsConstants, cp, mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -80,6 +80,10 @@ type PreparedEnvFile =
 
 type PreparedCliHome =
   | { ok: true; env: NodeJS.ProcessEnv; cleanup: () => Promise<void> }
+  | { ok: false; error: string };
+
+type PreparedWorkflowWorkspace =
+  | { ok: true; projectRoot: string; workflowPath: string }
   | { ok: false; error: string };
 
 const escapeEnvValue = (value: string): string => JSON.stringify(value);
@@ -437,10 +441,178 @@ const prepareExecutionEnv = async (
   return installBunRuntime(withLocalPath);
 };
 
+const workflowCompilerPath = (workflowRoot: string): string =>
+  path.join(workflowRoot, "node_modules", ".bin", "cre-compile");
+
+const workflowPluginPath = (workflowRoot: string): string =>
+  path.join(
+    workflowRoot,
+    "node_modules",
+    "@chainlink",
+    "cre-sdk-javy-plugin",
+    "dist",
+    "javy-chainlink-sdk.plugin.wasm",
+  );
+
+const prepareWorkflowWorkspace = async (
+  projectRoot: string,
+  workflowPath: string,
+  env: NodeJS.ProcessEnv,
+): Promise<PreparedWorkflowWorkspace> => {
+  const sourceWorkflowRoot = path.resolve(projectRoot, workflowPath);
+  const relativeWorkflowPath = path.relative(projectRoot, sourceWorkflowRoot);
+  if (!relativeWorkflowPath || relativeWorkflowPath.startsWith("..")) {
+    return {
+      ok: false,
+      error: `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:WORKFLOW_PATH_OUTSIDE_PROJECT:${sourceWorkflowRoot}`,
+    };
+  }
+
+  if (await isExecutable(workflowCompilerPath(sourceWorkflowRoot))) {
+    return { ok: true, projectRoot, workflowPath };
+  }
+
+  const runtimeBase = path.join(os.tmpdir(), "cre-workflow-runtime");
+  const runtimeProjectRoot = path.join(runtimeBase, "workflows");
+  const runtimeWorkflowRoot = path.join(runtimeProjectRoot, relativeWorkflowPath);
+
+  // Reuse warmed runtime workspace whenever available.
+  if (await isExecutable(workflowCompilerPath(runtimeWorkflowRoot))) {
+    return { ok: true, projectRoot: runtimeProjectRoot, workflowPath: relativeWorkflowPath };
+  }
+
+  try {
+    await rm(runtimeProjectRoot, { recursive: true, force: true });
+    await mkdir(runtimeBase, { recursive: true });
+    await cp(projectRoot, runtimeProjectRoot, { recursive: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      error: `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:WORKFLOW_COPY:${message}`,
+    };
+  }
+
+  const npmBin = await findExecutableInPath("npm", env);
+  if (!npmBin) {
+    return {
+      ok: false,
+      error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:WORKFLOW_DEPS_NPM_NOT_FOUND",
+    };
+  }
+
+  const npmCacheDir = path.join(runtimeBase, ".npm-cache");
+  const npmEnv = {
+    ...env,
+    NPM_CONFIG_CACHE: npmCacheDir,
+    npm_config_cache: npmCacheDir,
+    npm_config_update_notifier: "false",
+    npm_config_fund: "false",
+    npm_config_audit: "false",
+    npm_config_progress: "false",
+  };
+
+  try {
+    await execFileAsync(
+      npmBin,
+      [
+        "install",
+        "--no-audit",
+        "--no-fund",
+        "--no-save",
+        "--no-package-lock",
+        "--prefer-online",
+        "--install-strategy=shallow",
+        "--omit=dev",
+        "--ignore-scripts",
+        "--prefix",
+        runtimeWorkflowRoot,
+      ],
+      {
+        cwd: process.cwd(),
+        env: npmEnv,
+        timeout: 180000,
+        maxBuffer: serverConfig.creLocalMaxBufferBytes,
+        windowsHide: true,
+      },
+    );
+  } catch (error) {
+    const execError = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+    const details = [toSnippet(String(execError.stderr || "")), toSnippet(String(execError.stdout || ""))]
+      .filter(Boolean)
+      .join(" | ");
+    if (details && details.includes("ENOSPC")) {
+      return {
+        ok: false,
+        error: `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:WORKFLOW_DEPS_INSTALL_ENOSPC:${details}`,
+      };
+    }
+    if (details) {
+      return {
+        ok: false,
+        error: `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:WORKFLOW_DEPS_INSTALL:${details}`,
+      };
+    }
+    return {
+      ok: false,
+      error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:WORKFLOW_DEPS_INSTALL",
+    };
+  } finally {
+    try {
+      await rm(npmCacheDir, { recursive: true, force: true });
+    } catch {
+      // ignore cache cleanup failures
+    }
+  }
+
+  if (!(await isExecutable(workflowCompilerPath(runtimeWorkflowRoot)))) {
+    return {
+      ok: false,
+      error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:WORKFLOW_DEPS_MISSING_CRE_COMPILE",
+    };
+  }
+
+  if (!(await isExecutable(workflowPluginPath(runtimeWorkflowRoot)))) {
+    const bunBin = await findExecutableInPath("bun", env);
+    if (!bunBin) {
+      return {
+        ok: false,
+        error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:WORKFLOW_SETUP_MISSING_BUN",
+      };
+    }
+    try {
+      await execFileAsync(bunBin, ["x", "cre-setup"], {
+        cwd: runtimeWorkflowRoot,
+        env,
+        timeout: 120000,
+        maxBuffer: serverConfig.creLocalMaxBufferBytes,
+        windowsHide: true,
+      });
+    } catch (error) {
+      const execError = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+      const details = [toSnippet(String(execError.stderr || "")), toSnippet(String(execError.stdout || ""))]
+        .filter(Boolean)
+        .join(" | ");
+      if (details) {
+        return {
+          ok: false,
+          error: `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:WORKFLOW_SETUP_CRESETUP:${details}`,
+        };
+      }
+      return {
+        ok: false,
+        error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:WORKFLOW_SETUP_CRESETUP",
+      };
+    }
+  }
+
+  return { ok: true, projectRoot: runtimeProjectRoot, workflowPath: relativeWorkflowPath };
+};
+
 const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
-  const projectRoot = path.resolve(process.cwd(), serverConfig.creLocalProjectRoot);
+  const configuredProjectRoot = path.resolve(process.cwd(), serverConfig.creLocalProjectRoot);
   const cliCandidates = buildCliCandidates(serverConfig.creLocalCliBin);
-  const pathError = await ensureSimulationPaths(projectRoot, serverConfig.creLocalWorkflowPath);
+  const pathError = await ensureSimulationPaths(configuredProjectRoot, serverConfig.creLocalWorkflowPath);
   if (pathError) return asError(pathError);
 
   const preparedEnv = await prepareSimulationEnvFile();
@@ -460,11 +632,23 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
     return asError(preparedExecEnv.error);
   }
   const execEnv = preparedExecEnv.env;
+  const preparedWorkspace = await prepareWorkflowWorkspace(
+    configuredProjectRoot,
+    serverConfig.creLocalWorkflowPath,
+    execEnv,
+  );
+  if (!preparedWorkspace.ok) {
+    await cleanupCliHome();
+    await cleanup();
+    return asError(preparedWorkspace.error);
+  }
+  const projectRoot = preparedWorkspace.projectRoot;
+  const workflowPath = preparedWorkspace.workflowPath;
 
   const args = [
     "workflow",
     "simulate",
-    serverConfig.creLocalWorkflowPath,
+    workflowPath,
     "--project-root",
     projectRoot,
     "--env",

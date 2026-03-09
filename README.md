@@ -45,7 +45,7 @@ CoverFi is designed for AI-agent use: deterministic paid APIs, verifiable workfl
 
 CoverFi is built around a single Chainlink CRE workflow that acts as the orchestrator, communicating with smart contracts strictly through a Forwarder.
 
-![CoverFi Architecture Diagram](client/archdiag.png)
+![CoverFi Architecture Diagram](./client/archdiag.png)
 
 ### Onchain Contracts (Base Sepolia)
 - **PolicyNFT (ERC721):** Soulbound policy records. Transfer and approval paths are disabled. Mints and state transitions (ACTIVE → PAID / RESOLVED) are gatekept.

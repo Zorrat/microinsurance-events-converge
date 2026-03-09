@@ -94,6 +94,18 @@ GitHub Actions is kept for CI checks only (`lint` + `build`) via:
 
 No GitHub `VERCEL_*` secrets are required in this model.
 
+### Local parity debug (simulate Vercel quickly)
+
+Use Vercel CLI to run the same build + runtime behavior locally:
+
+1. From `client/`:
+   - `npm ci`
+   - `npm run build:vercel:sim`
+2. Run local server with Vercel runtime:
+   - `npx vercel dev --yes`
+3. Keep `CRE_EXECUTION_MODE=simulate` and your production-like `CRE_LOCAL_*` vars in `client/.env`.
+4. Call `/api/quote` against this local Vercel runtime to reproduce hosted errors quickly.
+
 ### 1) Vercel project setup
 
 In Vercel:
@@ -236,6 +248,13 @@ Use this mode when you cannot deploy workflows yet.
   - The serverless runtime ran out of temporary disk while attempting Bun runtime setup.
   - Deploy latest code so runtime uses platform-specific Bun package install with reduced npm cache usage.
   - Trigger one warm-up quote call, then retry; Bun is reused from `/tmp/cre-bun-runtime` on warm invocations.
+- `CRE_TRIGGER_FAILED:SIMULATION_EXIT_1:...Script not found "cre-compile"...`:
+  - Hosted runtime is missing workflow compile deps for TypeScript simulation.
+  - Latest code now auto-copies workflow files to `/tmp/cre-workflow-runtime` and installs workflow deps on first cold start.
+  - If this still appears, inspect function logs for:
+    - `WORKFLOW_DEPS_INSTALL_ENOSPC`
+    - `WORKFLOW_DEPS_INSTALL`
+    - `WORKFLOW_DEPS_MISSING_CRE_COMPILE`
 - Vercel build fails with glibc/libstdc++ errors for CRE:
   - Use `npm run build:vercel:sim` as the project build command.
   - Check the deployment logs for fallback attempts across pinned CRE versions.
