@@ -4,21 +4,26 @@ import { registerExactEvmScheme } from "@x402/evm/exact/server";
 
 import { serverConfig } from "./env";
 
-const coinbaseConfig = createFacilitatorConfig(
-  serverConfig.cdpApiKeyId,
-  serverConfig.cdpApiKeySecret,
-);
+const hasCoinbaseCredentials = Boolean(serverConfig.cdpApiKeyId && serverConfig.cdpApiKeySecret);
+const coinbaseConfig = hasCoinbaseCredentials
+  ? createFacilitatorConfig(serverConfig.cdpApiKeyId, serverConfig.cdpApiKeySecret)
+  : null;
 
 const facilitatorUrl =
   serverConfig.x402FacilitatorUrl ||
-  coinbaseConfig.url ||
+  coinbaseConfig?.url ||
   "https://api.cdp.coinbase.com/platform/v2/x402";
-const shouldUseCoinbaseAuth = facilitatorUrl.includes("api.cdp.coinbase.com");
+const shouldUseCoinbaseAuth =
+  serverConfig.x402UsesCoinbaseFacilitator &&
+  hasCoinbaseCredentials &&
+  facilitatorUrl.includes("api.cdp.coinbase.com");
 
 const configuredServer = new x402ResourceServer(
   new HTTPFacilitatorClient({
     url: facilitatorUrl,
-    ...(shouldUseCoinbaseAuth ? { createAuthHeaders: coinbaseConfig.createAuthHeaders } : {}),
+    ...(shouldUseCoinbaseAuth && coinbaseConfig
+      ? { createAuthHeaders: coinbaseConfig.createAuthHeaders }
+      : {}),
   }),
 );
 

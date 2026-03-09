@@ -93,11 +93,6 @@ if (creExecutionMode === "gateway") {
   required("CRE_TRIGGER_PRIVATE_KEY", creSignerPk);
 }
 
-if (isCoinbaseFacilitator(x402FacilitatorUrl)) {
-  required("CDP_API_KEY_ID", process.env.CDP_API_KEY_ID);
-  required("CDP_API_KEY_SECRET", process.env.CDP_API_KEY_SECRET);
-}
-
 export const serverConfig = {
   creExecutionMode,
   creGatewayUrl: process.env.CRE_GATEWAY_URL || "https://01.gateway.zone-a.cre.chain.link",
@@ -130,6 +125,7 @@ export const serverConfig = {
   x402BuyPriceUsd: normalizeUsdPrice(buyX402Fee),
   x402ClaimPriceUsd: normalizeUsdPrice(claimX402Fee),
   x402FacilitatorUrl,
+  x402UsesCoinbaseFacilitator: isCoinbaseFacilitator(x402FacilitatorUrl),
 
   cdpApiKeyId: process.env.CDP_API_KEY_ID,
   cdpApiKeySecret: process.env.CDP_API_KEY_SECRET,

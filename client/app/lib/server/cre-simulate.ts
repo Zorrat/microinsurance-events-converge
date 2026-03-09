@@ -135,9 +135,28 @@ const resolveCliBin = (value: string): string => {
   return path.resolve(process.cwd(), value);
 };
 
+const buildCliCandidates = (configured: string): string[] => {
+  const candidates: string[] = [];
+  const pushUnique = (value: string | undefined) => {
+    if (!value) return;
+    const resolved = resolveCliBin(value);
+    if (!candidates.includes(resolved)) {
+      candidates.push(resolved);
+    }
+  };
+
+  pushUnique(configured);
+  pushUnique("./.cre/bin/cre");
+  if (process.env.HOME) {
+    pushUnique(path.join(process.env.HOME, ".cre/bin/cre"));
+    pushUnique(path.join(process.env.HOME, ".local/bin/cre"));
+  }
+  return candidates;
+};
+
 const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
   const projectRoot = path.resolve(process.cwd(), serverConfig.creLocalProjectRoot);
-  const cliBin = resolveCliBin(serverConfig.creLocalCliBin);
+  const cliCandidates = buildCliCandidates(serverConfig.creLocalCliBin);
   const preparedEnv = await prepareSimulationEnvFile();
   if (!preparedEnv.ok) return asError(preparedEnv.error);
 
@@ -164,43 +183,48 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
   }
 
   try {
-    const { stdout } = await execFileAsync(cliBin, args, {
-      cwd: process.cwd(),
-      timeout: serverConfig.creLocalTimeoutMs,
-      maxBuffer: serverConfig.creLocalMaxBufferBytes,
-      windowsHide: true,
-    });
+    for (const cliBin of cliCandidates) {
+      try {
+        const { stdout } = await execFileAsync(cliBin, args, {
+          cwd: process.cwd(),
+          timeout: serverConfig.creLocalTimeoutMs,
+          maxBuffer: serverConfig.creLocalMaxBufferBytes,
+          windowsHide: true,
+        });
 
-    const parsed = extractResultJson(stdout);
-    if (!parsed) return asError("CRE_TRIGGER_FAILED:SIMULATION_NO_RESULT");
+        const parsed = extractResultJson(stdout);
+        if (!parsed) return asError("CRE_TRIGGER_FAILED:SIMULATION_NO_RESULT");
 
-    const validated = workflowResultSchema.safeParse(parsed);
-    if (!validated.success) return asError("CRE_TRIGGER_FAILED:SIMULATION_INVALID_RESULT");
+        const validated = workflowResultSchema.safeParse(parsed);
+        if (!validated.success) return asError("CRE_TRIGGER_FAILED:SIMULATION_INVALID_RESULT");
 
-    return validated.data;
-  } catch (error) {
-    const execError = error as NodeJS.ErrnoException & { killed?: boolean; signal?: string; stdout?: string };
-    const maybeStdout = execError.stdout ? String(execError.stdout) : "";
-    const parsed = maybeStdout ? extractResultJson(maybeStdout) : null;
-    if (parsed) {
-      const validated = workflowResultSchema.safeParse(parsed);
-      if (validated.success) return validated.data;
+        return validated.data;
+      } catch (error) {
+        const execError = error as NodeJS.ErrnoException & { killed?: boolean; signal?: string; stdout?: string };
+        const maybeStdout = execError.stdout ? String(execError.stdout) : "";
+        const parsed = maybeStdout ? extractResultJson(maybeStdout) : null;
+        if (parsed) {
+          const validated = workflowResultSchema.safeParse(parsed);
+          if (validated.success) return validated.data;
+        }
+
+        if (execError.code === "ENOENT") {
+          continue;
+        }
+
+        if (execError.code === "ETIMEDOUT" || execError.killed || execError.signal === "SIGTERM") {
+          return asError("CRE_TRIGGER_FAILED:SIMULATION_TIMEOUT");
+        }
+
+        if (typeof execError.code === "number") {
+          return asError(`CRE_TRIGGER_FAILED:SIMULATION_EXIT_${execError.code}`);
+        }
+
+        const message = execError.message || String(error);
+        return asError(`CRE_TRIGGER_FAILED:SIMULATION_EXEC_ERROR:${message}`);
+      }
     }
-
-    if (execError.code === "ETIMEDOUT" || execError.killed || execError.signal === "SIGTERM") {
-      return asError("CRE_TRIGGER_FAILED:SIMULATION_TIMEOUT");
-    }
-
-    if (typeof execError.code === "number") {
-      return asError(`CRE_TRIGGER_FAILED:SIMULATION_EXIT_${execError.code}`);
-    }
-
-    if (execError.code === "ENOENT") {
-      return asError("CRE_TRIGGER_FAILED:SIMULATION_EXEC_ERROR:CRE_CLI_NOT_FOUND");
-    }
-
-    const message = execError.message || String(error);
-    return asError(`CRE_TRIGGER_FAILED:SIMULATION_EXEC_ERROR:${message}`);
+    return asError("CRE_TRIGGER_FAILED:SIMULATION_EXEC_ERROR:CRE_CLI_NOT_FOUND");
   } finally {
     await cleanup();
   }
