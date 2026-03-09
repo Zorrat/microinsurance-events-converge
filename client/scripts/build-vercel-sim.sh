@@ -11,6 +11,13 @@ export PATH="$HOME/.cre:$HOME/.cre/bin:$HOME/.local/bin:$PATH"
 
 CRE_VERSION_CANDIDATES=(v1.3.0 v1.2.0 v1.1.0 v1.0.10)
 CRE_ATTEMPTS=()
+CRE_LIBSTDCXX_URLS=(
+  "https://anaconda.org/conda-forge/libstdcxx-ng/12.2.0/download/linux-64/libstdcxx-ng-12.2.0-h46fd767_19.tar.bz2"
+)
+CRE_LAST_VERIFY_ERROR=""
+CRE_LIBSTDCPP_READY="false"
+CRE_NEEDS_EXTRA_LIBSTDCPP="false"
+CRE_EXTRA_LD_LIBRARY_PATH=""
 
 log() {
   echo "[cre-build] $*" >&2
@@ -39,11 +46,25 @@ resolve_cre_bin() {
   return 1
 }
 
+run_cre_version() {
+  local candidate="$1"
+  local output_file="$2"
+
+  if [ -n "$CRE_EXTRA_LD_LIBRARY_PATH" ]; then
+    LD_LIBRARY_PATH="${CRE_EXTRA_LD_LIBRARY_PATH}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      "$candidate" version >"$output_file" 2>&1
+    return $?
+  fi
+
+  "$candidate" version >"$output_file" 2>&1
+}
+
 verify_cre_bin() {
   local candidate="$1"
   local output_file
+  CRE_LAST_VERIFY_ERROR=""
   output_file="$(mktemp)"
-  if "$candidate" version >"$output_file" 2>&1; then
+  if run_cre_version "$candidate" "$output_file"; then
     cat "$output_file" >&2
     rm -f "$output_file"
     return 0
@@ -51,8 +72,61 @@ verify_cre_bin() {
 
   local compact
   compact="$(tr '\n' ' ' <"$output_file" | sed 's/[[:space:]]\+/ /g')"
+  CRE_LAST_VERIFY_ERROR="$compact"
   record_attempt "Binary execution failed at $candidate :: $compact"
   rm -f "$output_file"
+  return 1
+}
+
+ensure_libstdcpp_runtime() {
+  if [ "$CRE_LIBSTDCPP_READY" = "true" ]; then
+    return 0
+  fi
+
+  mkdir -p ./.cre/lib
+  local temp_dir
+  temp_dir="$(mktemp -d)"
+
+  for url in "${CRE_LIBSTDCXX_URLS[@]}"; do
+    local archive="${temp_dir}/libstdcxx.tar.bz2"
+    record_attempt "Trying libstdc++ runtime package :: $url"
+
+    if ! curl -fL "$url" -o "$archive"; then
+      record_attempt "libstdc++ package download failed :: $url"
+      continue
+    fi
+
+    rm -rf "${temp_dir}/extract"
+    mkdir -p "${temp_dir}/extract"
+    if ! tar -xjf "$archive" -C "${temp_dir}/extract"; then
+      record_attempt "libstdc++ package extraction failed :: $url"
+      continue
+    fi
+
+    if ! find "${temp_dir}/extract" -type f -name 'libstdc++.so.6*' -exec cp '{}' ./.cre/lib/ ';'; then
+      record_attempt "libstdc++ package had no copyable runtime libs :: $url"
+      continue
+    fi
+
+    if [ ! -f ./.cre/lib/libstdc++.so.6 ]; then
+      local versioned
+      versioned="$(find ./.cre/lib -maxdepth 1 -type f -name 'libstdc++.so.6.*' | head -n1 || true)"
+      if [ -n "$versioned" ]; then
+        ln -sf "$(basename "$versioned")" ./.cre/lib/libstdc++.so.6
+      fi
+    fi
+
+    if [ -f ./.cre/lib/libstdc++.so.6 ]; then
+      CRE_EXTRA_LD_LIBRARY_PATH="$(pwd)/.cre/lib"
+      CRE_LIBSTDCPP_READY="true"
+      record_attempt "Installed libstdc++ runtime fallback at ${CRE_EXTRA_LD_LIBRARY_PATH}"
+      rm -rf "$temp_dir"
+      return 0
+    fi
+  done
+
+  rm -rf "$temp_dir"
+  record_attempt "Unable to install compatible libstdc++ runtime package"
   return 1
 }
 
@@ -122,6 +196,15 @@ try_ldd_fallback_asset() {
     return 0
   fi
 
+  if [[ "$CRE_LAST_VERIFY_ERROR" == *"GLIBCXX_3.4.30"* ]]; then
+    if ensure_libstdcpp_runtime && verify_cre_bin "$HOME/.cre/bin/cre"; then
+      rm -rf "$temp_dir"
+      CRE_NEEDS_EXTRA_LIBSTDCPP="true"
+      CRE_SELECTED_BIN="$HOME/.cre/bin/cre"
+      return 0
+    fi
+  fi
+
   rm -rf "$temp_dir"
   return 1
 }
@@ -153,8 +236,24 @@ fi
 log "Using CRE binary: $CRE_BIN"
 
 mkdir -p ./.cre/bin
-cp "$CRE_BIN" ./.cre/bin/cre
-chmod +x ./.cre/bin/cre
+if [ "$CRE_NEEDS_EXTRA_LIBSTDCPP" = "true" ]; then
+  cp "$CRE_BIN" ./.cre/bin/cre.real
+  chmod +x ./.cre/bin/cre.real
+  cat > ./.cre/bin/cre <<'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$SCRIPT_DIR/../lib"
+if [ -d "$LIB_DIR" ]; then
+  export LD_LIBRARY_PATH="$LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+exec "$SCRIPT_DIR/cre.real" "$@"
+WRAPPER
+  chmod +x ./.cre/bin/cre
+else
+  cp "$CRE_BIN" ./.cre/bin/cre
+  chmod +x ./.cre/bin/cre
+fi
 ./.cre/bin/cre version
 
 npm run build

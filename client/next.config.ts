@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
-    "/*": ["./.cre/bin/**", "./.cre/workflows/**"],
+    "/*": ["./.cre/bin/**", "./.cre/lib/**", "./.cre/workflows/**"],
   },
 };
 

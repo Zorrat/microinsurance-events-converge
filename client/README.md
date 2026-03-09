@@ -142,7 +142,8 @@ inside your hosted Node runtime for each paid request.
 2. Stage workflow assets into `client/.cre/workflows`.
 3. Try pinned CRE versions (`v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.10`) through the official installer.
 4. If a version fails to execute (for example glibc mismatch), try GitHub release fallback artifact `cre_linux_amd64_ldd2-35.tar.gz`.
-5. Copy the first working binary into `client/.cre/bin/cre`, validate with `cre version`, then run `next build`.
+5. If `GLIBCXX_3.4.30` is missing, bundle a compatible `libstdc++.so.6` into `client/.cre/lib` and wrap CRE execution with `LD_LIBRARY_PATH`.
+6. Copy the first working binary into `client/.cre/bin/cre`, validate with `cre version`, then run `next build`.
 
 ### 3) Post-deploy validation
 
