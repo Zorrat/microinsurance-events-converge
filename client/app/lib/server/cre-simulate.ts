@@ -272,65 +272,131 @@ const findExecutableInPath = async (binName: string, env: NodeJS.ProcessEnv): Pr
   return null;
 };
 
+const getPlatformBunPackageNames = (): string[] => {
+  const names: string[] = [];
+  if (process.platform === "linux" && process.arch === "x64") {
+    names.push("@oven/bun-linux-x64");
+  } else if (process.platform === "linux" && process.arch === "arm64") {
+    names.push("@oven/bun-linux-aarch64");
+  } else if (process.platform === "darwin" && process.arch === "x64") {
+    names.push("@oven/bun-darwin-x64");
+  } else if (process.platform === "darwin" && process.arch === "arm64") {
+    names.push("@oven/bun-darwin-aarch64");
+  } else if (process.platform === "win32" && process.arch === "x64") {
+    names.push("@oven/bun-windows-x64");
+  }
+  names.push("bun");
+  return names;
+};
+
+const buildBunBinaryCandidates = (bunInstallRoot: string): string[] => {
+  const candidates = [
+    path.join(bunInstallRoot, "node_modules", ".bin", "bun"),
+    path.join(bunInstallRoot, "node_modules", "bun", "bin", "bun.exe"),
+    path.join(bunInstallRoot, "node_modules", "@oven", "bun-linux-x64", "bin", "bun"),
+    path.join(bunInstallRoot, "node_modules", "@oven", "bun-linux-aarch64", "bin", "bun"),
+    path.join(bunInstallRoot, "node_modules", "@oven", "bun-darwin-x64", "bin", "bun"),
+    path.join(bunInstallRoot, "node_modules", "@oven", "bun-darwin-aarch64", "bin", "bun"),
+    path.join(bunInstallRoot, "node_modules", "@oven", "bun-windows-x64", "bin", "bun.exe"),
+    path.join(bunInstallRoot, "bin", "bun"),
+  ];
+  return candidates;
+};
+
 const installBunRuntime = async (env: NodeJS.ProcessEnv): Promise<{ ok: true; env: NodeJS.ProcessEnv } | { ok: false; error: string }> => {
   const bunInstallRoot = path.join(os.tmpdir(), "cre-bun-runtime");
-  const bunNpmBinDir = path.join(bunInstallRoot, "node_modules", ".bin");
-  const bunNpmBinary = path.join(bunNpmBinDir, "bun");
-  const bunPackageBinary = path.join(bunInstallRoot, "node_modules", "bun", "bin", "bun.exe");
   const bunScriptBinDir = path.join(bunInstallRoot, "bin");
-  const bunScriptBinary = path.join(bunScriptBinDir, "bun");
+  const bunScriptBinaryUnix = path.join(bunScriptBinDir, "bun");
+  const bunScriptBinaryWin = path.join(bunScriptBinDir, "bun.exe");
+  const bunBinaryCandidates = buildBunBinaryCandidates(bunInstallRoot);
 
-  if (await isExecutable(bunNpmBinary)) {
-    return { ok: true, env: prependPath(env, bunNpmBinDir) };
+  for (const candidate of bunBinaryCandidates) {
+    if (await isExecutable(candidate)) {
+      return { ok: true, env: prependPath(env, path.dirname(candidate)) };
+    }
   }
-  if (await isExecutable(bunPackageBinary)) {
-    return { ok: true, env: prependPath(env, path.dirname(bunPackageBinary)) };
+  if (await isExecutable(bunScriptBinaryUnix)) {
+    return { ok: true, env: prependPath(env, bunScriptBinDir) };
   }
-  if (await isExecutable(bunScriptBinary)) {
+  if (await isExecutable(bunScriptBinaryWin)) {
     return { ok: true, env: prependPath(env, bunScriptBinDir) };
   }
 
-  // Preferred path: install Bun via npm package to avoid unzip dependency.
+  // Preferred path: install platform-specific Bun package to keep /tmp usage low.
   const npmBin = await findExecutableInPath("npm", env);
   if (npmBin) {
-    try {
-      await execFileAsync(
-        npmBin,
-        [
-          "install",
-          "--no-audit",
-          "--no-fund",
-          "--prefer-online",
-          "--omit=dev",
-          "--prefix",
-          bunInstallRoot,
-          "bun@1.3.0",
-        ],
-        {
-          cwd: process.cwd(),
-          env,
-          timeout: 180000,
-          maxBuffer: serverConfig.creLocalMaxBufferBytes,
-          windowsHide: true,
-        },
-      );
-    } catch (error) {
-      const execError = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
-      const details = [toSnippet(String(execError.stderr || "")), toSnippet(String(execError.stdout || ""))]
-        .filter(Boolean)
-        .join(" | ");
-      if (details) {
-        return { ok: false, error: `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NPM_INSTALL:${details}` };
+    const bunVersion = "1.3.0";
+    const npmCacheDir = path.join(bunInstallRoot, ".npm-cache");
+    const npmInstallEnv = {
+      ...env,
+      NPM_CONFIG_CACHE: npmCacheDir,
+      npm_config_cache: npmCacheDir,
+      npm_config_update_notifier: "false",
+      npm_config_fund: "false",
+      npm_config_audit: "false",
+      npm_config_progress: "false",
+    };
+    const installTargets = getPlatformBunPackageNames().map((name) => `${name}@${bunVersion}`);
+    let lastInstallDetails = "";
+    for (const target of installTargets) {
+      try {
+        await execFileAsync(
+          npmBin,
+          [
+            "install",
+            "--no-audit",
+            "--no-fund",
+            "--no-save",
+            "--no-package-lock",
+            "--prefer-online",
+            "--install-strategy=shallow",
+            "--omit=dev",
+            "--ignore-scripts",
+            "--prefix",
+            bunInstallRoot,
+            target,
+          ],
+          {
+            cwd: process.cwd(),
+            env: npmInstallEnv,
+            timeout: 180000,
+            maxBuffer: serverConfig.creLocalMaxBufferBytes,
+            windowsHide: true,
+          },
+        );
+      } catch (error) {
+        const execError = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+        const details = [toSnippet(String(execError.stderr || "")), toSnippet(String(execError.stdout || ""))]
+          .filter(Boolean)
+          .join(" | ");
+        if (details && details.includes("ENOSPC")) {
+          return { ok: false, error: `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NPM_INSTALL_ENOSPC:${details}` };
+        }
+        if (details) {
+          lastInstallDetails = details;
+        }
+        continue;
       }
-      return { ok: false, error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NPM_INSTALL" };
+
+      for (const candidate of bunBinaryCandidates) {
+        if (await isExecutable(candidate)) {
+          try {
+            await rm(npmCacheDir, { recursive: true, force: true });
+          } catch {
+            // ignore cache cleanup failures
+          }
+          return { ok: true, env: prependPath(env, path.dirname(candidate)) };
+        }
+      }
     }
 
-    if (await isExecutable(bunNpmBinary)) {
-      return { ok: true, env: prependPath(env, bunNpmBinDir) };
+    if (lastInstallDetails) {
+      return {
+        ok: false,
+        error: `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NPM_INSTALL:${lastInstallDetails}`,
+      };
     }
-    if (await isExecutable(bunPackageBinary)) {
-      return { ok: true, env: prependPath(env, path.dirname(bunPackageBinary)) };
-    }
+    return { ok: false, error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NPM_INSTALL_NO_BINARY" };
   }
 
   // Fallback path: bun.sh installer (requires unzip in environment).
@@ -354,7 +420,7 @@ const installBunRuntime = async (env: NodeJS.ProcessEnv): Promise<{ ok: true; en
     return { ok: false, error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_INSTALL" };
   }
 
-  if (!(await isExecutable(bunScriptBinary))) {
+  if (!(await isExecutable(bunScriptBinaryUnix)) && !(await isExecutable(bunScriptBinaryWin))) {
     return { ok: false, error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NOT_FOUND_AFTER_INSTALL" };
   }
 

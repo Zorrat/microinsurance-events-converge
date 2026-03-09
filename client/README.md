@@ -232,6 +232,10 @@ Use this mode when you cannot deploy workflows yet.
 - `CRE_TRIGGER_FAILED:SIMULATION_EXIT_1:...bun is required...`:
   - Runtime auto-installs Bun into `/tmp` on first cold start.
   - If this persists, check route logs for `SIMULATION_RUNTIME_SETUP_FAILED:BUN_NPM_INSTALL` or `...:BUN_INSTALL`.
+- `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NPM_INSTALL_ENOSPC:...`:
+  - The serverless runtime ran out of temporary disk while attempting Bun runtime setup.
+  - Deploy latest code so runtime uses platform-specific Bun package install with reduced npm cache usage.
+  - Trigger one warm-up quote call, then retry; Bun is reused from `/tmp/cre-bun-runtime` on warm invocations.
 - Vercel build fails with glibc/libstdc++ errors for CRE:
   - Use `npm run build:vercel:sim` as the project build command.
   - Check the deployment logs for fallback attempts across pinned CRE versions.
