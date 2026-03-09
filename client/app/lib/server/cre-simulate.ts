@@ -274,14 +274,67 @@ const findExecutableInPath = async (binName: string, env: NodeJS.ProcessEnv): Pr
 
 const installBunRuntime = async (env: NodeJS.ProcessEnv): Promise<{ ok: true; env: NodeJS.ProcessEnv } | { ok: false; error: string }> => {
   const bunInstallRoot = path.join(os.tmpdir(), "cre-bun-runtime");
-  const bunBinDir = path.join(bunInstallRoot, "bin");
-  const bunBinary = path.join(bunBinDir, "bun");
+  const bunNpmBinDir = path.join(bunInstallRoot, "node_modules", ".bin");
+  const bunNpmBinary = path.join(bunNpmBinDir, "bun");
+  const bunPackageBinary = path.join(bunInstallRoot, "node_modules", "bun", "bin", "bun.exe");
+  const bunScriptBinDir = path.join(bunInstallRoot, "bin");
+  const bunScriptBinary = path.join(bunScriptBinDir, "bun");
 
-  if (await isExecutable(bunBinary)) {
-    return { ok: true, env: prependPath(env, bunBinDir) };
+  if (await isExecutable(bunNpmBinary)) {
+    return { ok: true, env: prependPath(env, bunNpmBinDir) };
+  }
+  if (await isExecutable(bunPackageBinary)) {
+    return { ok: true, env: prependPath(env, path.dirname(bunPackageBinary)) };
+  }
+  if (await isExecutable(bunScriptBinary)) {
+    return { ok: true, env: prependPath(env, bunScriptBinDir) };
   }
 
-  const installEnv = prependPath({ ...env, BUN_INSTALL: bunInstallRoot }, bunBinDir);
+  // Preferred path: install Bun via npm package to avoid unzip dependency.
+  const npmBin = await findExecutableInPath("npm", env);
+  if (npmBin) {
+    try {
+      await execFileAsync(
+        npmBin,
+        [
+          "install",
+          "--no-audit",
+          "--no-fund",
+          "--prefer-online",
+          "--omit=dev",
+          "--prefix",
+          bunInstallRoot,
+          "bun@1.3.0",
+        ],
+        {
+          cwd: process.cwd(),
+          env,
+          timeout: 180000,
+          maxBuffer: serverConfig.creLocalMaxBufferBytes,
+          windowsHide: true,
+        },
+      );
+    } catch (error) {
+      const execError = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+      const details = [toSnippet(String(execError.stderr || "")), toSnippet(String(execError.stdout || ""))]
+        .filter(Boolean)
+        .join(" | ");
+      if (details) {
+        return { ok: false, error: `CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NPM_INSTALL:${details}` };
+      }
+      return { ok: false, error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NPM_INSTALL" };
+    }
+
+    if (await isExecutable(bunNpmBinary)) {
+      return { ok: true, env: prependPath(env, bunNpmBinDir) };
+    }
+    if (await isExecutable(bunPackageBinary)) {
+      return { ok: true, env: prependPath(env, path.dirname(bunPackageBinary)) };
+    }
+  }
+
+  // Fallback path: bun.sh installer (requires unzip in environment).
+  const installEnv = prependPath({ ...env, BUN_INSTALL: bunInstallRoot }, bunScriptBinDir);
   try {
     await execFileAsync("bash", ["-lc", "set -euo pipefail; curl -fsSL https://bun.sh/install | bash"], {
       cwd: process.cwd(),
@@ -301,11 +354,11 @@ const installBunRuntime = async (env: NodeJS.ProcessEnv): Promise<{ ok: true; en
     return { ok: false, error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_INSTALL" };
   }
 
-  if (!(await isExecutable(bunBinary))) {
+  if (!(await isExecutable(bunScriptBinary))) {
     return { ok: false, error: "CRE_TRIGGER_FAILED:SIMULATION_RUNTIME_SETUP_FAILED:BUN_NOT_FOUND_AFTER_INSTALL" };
   }
 
-  return { ok: true, env: prependPath(env, bunBinDir) };
+  return { ok: true, env: prependPath(env, bunScriptBinDir) };
 };
 
 const prepareExecutionEnv = async (

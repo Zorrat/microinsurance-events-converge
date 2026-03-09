@@ -150,7 +150,7 @@ inside your hosted Node runtime for each paid request.
 5. If `GLIBCXX_3.4.30` is missing, bundle a compatible `libstdc++.so.6` into `client/.cre/lib` and wrap CRE execution with `LD_LIBRARY_PATH`.
 6. Copy the first working binary into `client/.cre/bin/cre`, validate with `cre version`, then run `next build`.
 
-Hosted simulate installs Bun on-demand into `/tmp` at runtime if missing, which keeps the deployed function bundle smaller.
+Hosted simulate installs Bun on-demand into `/tmp` at runtime if missing (first via `npm install bun`, then fallback to bun installer), which keeps the deployed function bundle smaller.
 
 The staged workflow must include `.cre_build_tmp.js` (bundled workflow artifact). If missing, build fails with an explicit error.
 
@@ -230,8 +230,8 @@ Use this mode when you cannot deploy workflows yet.
   - Set `CRE_LOCAL_CREDENTIALS_BASE64` in Vercel to base64 content of your local `~/.cre/cre.yaml`.
   - If credentials expire, refresh locally with `cre login`, regenerate base64, update Vercel env, and redeploy.
 - `CRE_TRIGGER_FAILED:SIMULATION_EXIT_1:...bun is required...`:
-  - Runtime will auto-install Bun into `/tmp` on first cold start.
-  - If this persists, check outbound network access and route logs for `SIMULATION_RUNTIME_SETUP_FAILED:BUN_INSTALL`.
+  - Runtime auto-installs Bun into `/tmp` on first cold start.
+  - If this persists, check route logs for `SIMULATION_RUNTIME_SETUP_FAILED:BUN_NPM_INSTALL` or `...:BUN_INSTALL`.
 - Vercel build fails with glibc/libstdc++ errors for CRE:
   - Use `npm run build:vercel:sim` as the project build command.
   - Check the deployment logs for fallback attempts across pinned CRE versions.
