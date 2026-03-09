@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "prepare:cre:sim-assets": "bash ./scripts/prepare-cre-sim-assets.sh",
+    "build:vercel:sim": "bash ./scripts/build-vercel-sim.sh",
     "start": "next start",
     "lint": "eslint"
   },

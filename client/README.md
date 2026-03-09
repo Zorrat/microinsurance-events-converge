@@ -81,36 +81,26 @@ Open:
 - `http://localhost:3000/` for landing
 - `http://localhost:3000/app` for workflow tester
 
-## Production Publish (Vercel + GitHub Actions)
+## Production Publish (Direct Vercel)
 
-This repo includes a production workflow at:
+Vercel is the deployment source of truth for production.
+GitHub Actions is kept for CI checks only (`lint` + `build`) via:
 
 - `.github/workflows/client-ci-deploy-vercel.yml`
 
-The workflow:
+No GitHub `VERCEL_*` secrets are required in this model.
 
-- runs on push to `main` (when `client/**`, `workflows/event-microinsurance/**`, `workflows/project.yaml`, or the workflow file changes)
-- supports manual runs via `workflow_dispatch`
-- runs `npm ci`, prepares bundled CRE simulate assets, lints, and builds in `client/`
-- installs CRE CLI and bundles it into the deployment artifact
-- deploys to Vercel using prebuilt output in `simulate` mode (no CRE workflow deploy required)
-
-### 1) GitHub repository secrets
-
-Add these repository secrets before running deploy:
-
-- `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
-
-### 2) Vercel project setup
+### 1) Vercel project setup
 
 In Vercel:
 
 1. Import this repository.
 2. Set **Root Directory** to `client`.
-3. Configure all required production env vars.
-4. Optional: disable Vercel Git auto-deploy if you only want deploys from GitHub Actions.
+3. Set **Install Command** to:
+   - `npm ci`
+4. Set **Build Command** to:
+   - `npm run build:vercel:sim`
+5. Configure all required production env vars.
 
 Required server vars for hosted simulate mode:
 
@@ -137,7 +127,7 @@ Required server vars for hosted simulate mode:
 
 Also set required `NEXT_PUBLIC_*` vars (USDC/contract addresses, chain config, explorers).
 
-### 3) No CRE deploy access path
+### 2) No CRE deploy access path
 
 This hosted path intentionally avoids `cre workflow deploy` and runs:
 
@@ -145,7 +135,7 @@ This hosted path intentionally avoids `cre workflow deploy` and runs:
 
 inside your hosted Node runtime for each paid request.
 
-### 4) Post-deploy validation
+### 3) Post-deploy validation
 
 After deploy:
 
