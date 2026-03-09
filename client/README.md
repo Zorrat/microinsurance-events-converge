@@ -147,8 +147,9 @@ inside your hosted Node runtime for each paid request.
 2. Stage a slim workflow bundle into `client/.cre/workflows` (without workflow `node_modules`/tests to fit serverless limits).
 3. Try pinned CRE versions (`v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.10`) through the official installer.
 4. If a version fails to execute (for example glibc mismatch), try GitHub release fallback artifact `cre_linux_amd64_ldd2-35.tar.gz`.
-5. If `GLIBCXX_3.4.30` is missing, bundle a compatible `libstdc++.so.6` into `client/.cre/lib` and wrap CRE execution with `LD_LIBRARY_PATH`.
-6. Copy the first working binary into `client/.cre/bin/cre`, validate with `cre version`, then run `next build`.
+5. Bundle Bun runtime into `client/.cre/bin/bun` so hosted TypeScript simulation can compile at request time.
+6. If `GLIBCXX_3.4.30` is missing, bundle a compatible `libstdc++.so.6` into `client/.cre/lib` and wrap CRE execution with `LD_LIBRARY_PATH`.
+7. Copy the first working binary into `client/.cre/bin/cre`, validate with `cre version`, then run `next build`.
 
 The staged workflow must include `.cre_build_tmp.js` (bundled workflow artifact). If missing, build fails with an explicit error.
 
@@ -227,6 +228,9 @@ Use this mode when you cannot deploy workflows yet.
 - `CRE_TRIGGER_FAILED:SIMULATION_EXIT_1:...you are not logged in...`:
   - Set `CRE_LOCAL_CREDENTIALS_BASE64` in Vercel to base64 content of your local `~/.cre/cre.yaml`.
   - If credentials expire, refresh locally with `cre login`, regenerate base64, update Vercel env, and redeploy.
+- `CRE_TRIGGER_FAILED:SIMULATION_EXIT_1:...bun is required...`:
+  - Ensure deploy uses `npm run build:vercel:sim`; this build script bundles Bun into `client/.cre/bin`.
+  - Redeploy with clear build cache so bundled runtime artifacts refresh.
 - Vercel build fails with glibc/libstdc++ errors for CRE:
   - Use `npm run build:vercel:sim` as the project build command.
   - Check the deployment logs for fallback attempts across pinned CRE versions.

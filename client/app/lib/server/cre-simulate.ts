@@ -240,6 +240,19 @@ const buildCliCandidates = (configured: string): string[] => {
   return candidates;
 };
 
+const withLocalToolPath = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+  const localBinDir = path.resolve(process.cwd(), ".cre/bin");
+  const currentPath = env.PATH || process.env.PATH || "";
+  const segments = currentPath ? currentPath.split(path.delimiter).filter(Boolean) : [];
+  if (!segments.includes(localBinDir)) {
+    segments.unshift(localBinDir);
+  }
+  return {
+    ...env,
+    PATH: segments.join(path.delimiter),
+  };
+};
+
 const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
   const projectRoot = path.resolve(process.cwd(), serverConfig.creLocalProjectRoot);
   const cliCandidates = buildCliCandidates(serverConfig.creLocalCliBin);
@@ -256,6 +269,7 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
 
   const { envFile, cleanup } = preparedEnv;
   const { env: cliEnv, cleanup: cleanupCliHome } = preparedCliHome;
+  const execEnv = withLocalToolPath(cliEnv);
 
   const args = [
     "workflow",
@@ -282,7 +296,7 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
       try {
         const { stdout } = await execFileAsync(cliBin, args, {
           cwd: process.cwd(),
-          env: cliEnv,
+          env: execEnv,
           timeout: serverConfig.creLocalTimeoutMs,
           maxBuffer: serverConfig.creLocalMaxBufferBytes,
           windowsHide: true,

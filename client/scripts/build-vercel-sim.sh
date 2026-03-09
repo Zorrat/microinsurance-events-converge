@@ -44,6 +44,37 @@ record_attempt() {
   log "$*"
 }
 
+ensure_bun_runtime() {
+  local bun_bin
+  bun_bin="$(command -v bun || true)"
+
+  if [ -z "$bun_bin" ]; then
+    record_attempt "Installing Bun runtime for hosted TypeScript workflow compilation"
+    if ! curl -fsSL https://bun.sh/install | bash; then
+      record_attempt "Bun installer command failed"
+      return 1
+    fi
+    export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+    export PATH="$BUN_INSTALL/bin:$PATH"
+    bun_bin="$(command -v bun || true)"
+  fi
+
+  if [ -z "$bun_bin" ] && [ -x "$HOME/.bun/bin/bun" ]; then
+    bun_bin="$HOME/.bun/bin/bun"
+  fi
+
+  if [ -z "$bun_bin" ]; then
+    record_attempt "Bun runtime not found after installation"
+    return 1
+  fi
+
+  mkdir -p ./.cre/bin
+  cp "$bun_bin" ./.cre/bin/bun
+  chmod +x ./.cre/bin/bun
+  log "Bundled Bun runtime: $(./.cre/bin/bun --version)"
+  return 0
+}
+
 resolve_cre_bin() {
   local cre_bin
   cre_bin="$(command -v cre || true)"
@@ -250,6 +281,11 @@ if [ -z "$CRE_BIN" ]; then
 fi
 
 log "Using CRE binary: $CRE_BIN"
+
+if ! ensure_bun_runtime; then
+  log "Failed to prepare Bun runtime required for hosted TypeScript simulation."
+  exit 1
+fi
 
 mkdir -p ./.cre/bin
 if [ "$CRE_NEEDS_EXTRA_LIBSTDCPP" = "true" ]; then
