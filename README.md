@@ -9,12 +9,6 @@
 
 <br />
 
-## 🎥 Demo Video
-
-[![CoverFi Demo Video](https://img.youtube.com/vi/YOUR_VIDEO_ID/0.jpg)](https://www.youtube.com/watch?v=YOUR_VIDEO_ID)
-> *Watch our 3-minute demo showcasing the Chainlink CRE workflow simulated via CLI and integrated into the CoverFi web application.*
-
----
 
 ## 🚀 Overview
 
@@ -79,6 +73,14 @@ CoverFi is designed with a strict "Don't Trust, Verify" model:
 - **Risk AI:** Google Gemini API (`gemini-2.0-flash`) *(Sponsor Prize Candidate)*
 - **Frontend:** Next.js, React, HeroUI, Tailwind CSS
 - **APIs:** Eventbrite API (Extensible to Luma, etc.)
+
+
+## 🎥 Demo Video
+
+[![CoverFi Demo Video]](https://youtu.be/QnkSvXrcPig)
+> *Watch our demo showcasing the Chainlink CRE workflow simulated via CLI and integrated into the CoverFi web application.*
+
+---
 
 ### ⛓️ Chainlink CRE Files
 This project specifically fulfills the requirement to build and simulate a CRE Workflow. The workflow integrates a blockchain (Base Sepolia) with an external API (Eventbrite) and an LLM (Gemini). The core Chainlink files are:
