@@ -100,6 +100,7 @@ In Vercel:
    - `npm ci`
 4. Set **Build Command** to:
    - `npm run build:vercel:sim`
+   - Do not use a custom inline one-liner build command; this script now handles CRE install/version fallback.
 5. Configure all required production env vars.
 
 Required server vars for hosted simulate mode:
@@ -134,6 +135,14 @@ This hosted path intentionally avoids `cre workflow deploy` and runs:
 - `cre workflow simulate`
 
 inside your hosted Node runtime for each paid request.
+
+`build:vercel:sim` will:
+
+1. Print host diagnostics (`uname -a`, `ldd --version`).
+2. Stage workflow assets into `client/.cre/workflows`.
+3. Try pinned CRE versions (`v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.10`) through the official installer.
+4. If a version fails to execute (for example glibc mismatch), try GitHub release fallback artifact `cre_linux_amd64_ldd2-35.tar.gz`.
+5. Copy the first working binary into `client/.cre/bin/cre`, validate with `cre version`, then run `next build`.
 
 ### 3) Post-deploy validation
 
@@ -197,6 +206,10 @@ Use this mode when you cannot deploy workflows yet.
   - If using Coinbase CDP facilitator, verify `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` are valid and not expired.
 - `CRE_TRIGGER_FAILED:SIMULATION_EXEC_ERROR:CRE_CLI_NOT_FOUND`:
   - Install CRE CLI and confirm `cre` is in your shell `PATH`.
+- Vercel build fails with glibc/libstdc++ errors for CRE:
+  - Use `npm run build:vercel:sim` as the project build command.
+  - Check the deployment logs for fallback attempts across pinned CRE versions.
+  - If all attempts fail, the Vercel image is incompatible with available CRE binaries for that deployment.
 - Simulation failing on secret reads:
   - Confirm `workflows/.env` has `CRE_ETH_PRIVATE_KEY`, `EVENTBRITE_API_TOKEN`, and `QUOTE_SIGNER_PK`.
 - Broadcasted simulation tx fails:
