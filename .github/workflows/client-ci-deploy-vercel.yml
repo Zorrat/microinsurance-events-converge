@@ -92,8 +92,11 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL https://cre.chain.link/install.sh | bash
-          export PATH="$HOME/.cre/bin:$HOME/.local/bin:$PATH"
+          export PATH="$HOME/.cre:$HOME/.cre/bin:$HOME/.local/bin:$PATH"
           CRE_BIN="$(command -v cre || true)"
+          if [ -z "$CRE_BIN" ] && [ -x "$HOME/.cre/cre" ]; then
+            CRE_BIN="$HOME/.cre/cre"
+          fi
           if [ -z "$CRE_BIN" ] && [ -x "$HOME/.cre/bin/cre" ]; then
             CRE_BIN="$HOME/.cre/bin/cre"
           fi
@@ -107,7 +110,7 @@ jobs:
           mkdir -p ./.cre/bin
           cp "$CRE_BIN" ./.cre/bin/cre
           chmod +x ./.cre/bin/cre
-          ./.cre/bin/cre --version
+          ./.cre/bin/cre version
 
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
