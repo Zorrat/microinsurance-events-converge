@@ -14,5 +14,12 @@ rm -rf "$DEST_WORKFLOWS_DIR/event-microinsurance"
 cp "$SOURCE_WORKFLOWS_DIR/project.yaml" "$DEST_WORKFLOWS_DIR/project.yaml"
 cp -R "$SOURCE_WORKFLOWS_DIR/event-microinsurance" "$DEST_WORKFLOWS_DIR/event-microinsurance"
 
-# Keep deploy artifact deterministic.
-rm -f "$DEST_WORKFLOWS_DIR/event-microinsurance/.cre_build_tmp.js"
+# Keep staged workflow slim for serverless bundle limits.
+rm -rf "$DEST_WORKFLOWS_DIR/event-microinsurance/node_modules"
+rm -rf "$DEST_WORKFLOWS_DIR/event-microinsurance/test"
+rm -rf "$DEST_WORKFLOWS_DIR/event-microinsurance/test-payloads"
+
+if [ ! -f "$DEST_WORKFLOWS_DIR/event-microinsurance/.cre_build_tmp.js" ]; then
+  echo "[cre-build] Warning: missing .cre_build_tmp.js in staged workflow."
+  echo "[cre-build] Runtime simulate may fail without bundled workflow artifact."
+fi

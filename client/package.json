@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "bash ./scripts/prepare-cre-sim-local-runtime.sh",
     "dev": "next dev",
     "build": "next build",
     "prepare:cre:sim-assets": "bash ./scripts/prepare-cre-sim-assets.sh",

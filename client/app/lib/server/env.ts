@@ -80,7 +80,7 @@ const creExecutionMode = parseExecutionMode(process.env.CRE_EXECUTION_MODE);
 const creWorkflowId = process.env.CRE_WORKFLOW_ID || "";
 const creClaimWorkflowId = process.env.CRE_CLAIM_WORKFLOW_ID || "";
 const defaultLocalCliBin = isVercelRuntime ? "./.cre/bin/cre" : "cre";
-const defaultLocalProjectRoot = isVercelRuntime ? "./.cre/workflows" : "../workflows";
+const defaultLocalProjectRoot = "./.cre/workflows";
 const defaultLocalEnvFile = isVercelRuntime ? "" : "../workflows/.env";
 const x402FacilitatorUrl = normalizeUrl(
   process.env.X402_FACILITATOR_URL ||

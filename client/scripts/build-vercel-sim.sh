@@ -8,12 +8,20 @@ ldd --version || true
 npm run prepare:cre:sim-assets
 
 WORKFLOW_STAGE_DIR="./.cre/workflows/event-microinsurance"
-if [ -f "$WORKFLOW_STAGE_DIR/package-lock.json" ]; then
-  echo "[cre-build] Installing staged workflow dependencies into $WORKFLOW_STAGE_DIR"
-  npm ci --omit=dev --ignore-scripts --prefix "$WORKFLOW_STAGE_DIR"
-else
-  echo "[cre-build] Skipped workflow dependency install: package-lock.json not found at $WORKFLOW_STAGE_DIR"
+if [ ! -f "$WORKFLOW_STAGE_DIR/.cre_build_tmp.js" ]; then
+  echo "[cre-build] Missing $WORKFLOW_STAGE_DIR/.cre_build_tmp.js"
+  echo "[cre-build] Generate workflow bundle locally and commit it before deploying."
+  echo "[cre-build] Suggested command:"
+  echo "[cre-build]   cd workflows && cre workflow build ./event-microinsurance --target staging-settings"
+  exit 1
 fi
+
+# Keep hosted bundle under serverless size limits.
+rm -rf "$WORKFLOW_STAGE_DIR/node_modules"
+rm -rf "$WORKFLOW_STAGE_DIR/test"
+rm -rf "$WORKFLOW_STAGE_DIR/test-payloads"
+rm -f "$WORKFLOW_STAGE_DIR/bun.lock"
+rm -f "$WORKFLOW_STAGE_DIR/package-lock.json"
 
 export PATH="$HOME/.cre:$HOME/.cre/bin:$HOME/.local/bin:$PATH"
 

@@ -76,6 +76,10 @@ npm install
 npm run dev
 ```
 
+`npm run dev` runs local CRE staging first, so local simulation uses `client/.cre/workflows` by default.
+It also installs staged workflow deps (`node_modules`) for local `cre workflow simulate` compilation.
+If the CRE Javy plugin is missing, it automatically runs `bun x cre-setup` in the staged workflow.
+
 Open:
 
 - `http://localhost:3000/` for landing
@@ -140,11 +144,13 @@ inside your hosted Node runtime for each paid request.
 `build:vercel:sim` will:
 
 1. Print host diagnostics (`uname -a`, `ldd --version`).
-2. Stage workflow assets into `client/.cre/workflows`.
+2. Stage a slim workflow bundle into `client/.cre/workflows` (without workflow `node_modules`/tests to fit serverless limits).
 3. Try pinned CRE versions (`v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.10`) through the official installer.
 4. If a version fails to execute (for example glibc mismatch), try GitHub release fallback artifact `cre_linux_amd64_ldd2-35.tar.gz`.
 5. If `GLIBCXX_3.4.30` is missing, bundle a compatible `libstdc++.so.6` into `client/.cre/lib` and wrap CRE execution with `LD_LIBRARY_PATH`.
 6. Copy the first working binary into `client/.cre/bin/cre`, validate with `cre version`, then run `next build`.
+
+The staged workflow must include `.cre_build_tmp.js` (bundled workflow artifact). If missing, build fails with an explicit error.
 
 For hosted simulate auth, you must also provide CLI credentials:
 
@@ -180,7 +186,8 @@ Use this mode when you cannot deploy workflows yet.
 2. Set mode/env in `client/.env`:
 - `CRE_EXECUTION_MODE=simulate`
 - Keep x402 settings valid (`X402_PAY_TO`, `X402_NETWORK`, facilitator URL)
-- Adjust `CRE_LOCAL_*` paths only if your repo layout differs from defaults
+- Default local path is `CRE_LOCAL_PROJECT_ROOT=./.cre/workflows` (staged automatically on `npm run dev`)
+- Keep `CRE_LOCAL_ENV_FILE=../workflows/.env` unless you intentionally move secrets
 
 3. Run app:
 - `cd client`
