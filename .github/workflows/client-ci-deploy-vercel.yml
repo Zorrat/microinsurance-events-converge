@@ -63,6 +63,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    environment: production
     env:
       NEXT_TELEMETRY_DISABLED: "1"
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
