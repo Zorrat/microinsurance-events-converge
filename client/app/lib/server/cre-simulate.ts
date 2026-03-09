@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, constants as fsConstants, unlink, writeFile } from "node:fs/promises";
+import { access, constants as fsConstants, mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -78,6 +78,10 @@ type PreparedEnvFile =
   | { ok: true; envFile: string; cleanup: () => Promise<void> }
   | { ok: false; error: string };
 
+type PreparedCliHome =
+  | { ok: true; env: NodeJS.ProcessEnv; cleanup: () => Promise<void> }
+  | { ok: false; error: string };
+
 const escapeEnvValue = (value: string): string => JSON.stringify(value);
 
 const prepareRuntimeEnvFile = async (): Promise<PreparedEnvFile> => {
@@ -137,6 +141,57 @@ const prepareSimulationEnvFile = async (): Promise<PreparedEnvFile> => {
   return { ok: true, envFile, cleanup: async () => undefined };
 };
 
+const decodeCredentialsBase64 = (value: string): string | null => {
+  try {
+    const normalized = value.trim();
+    if (!normalized) return null;
+    const decoded = Buffer.from(normalized, "base64").toString("utf8");
+    if (!decoded.trim()) return null;
+    return decoded;
+  } catch {
+    return null;
+  }
+};
+
+const prepareCliHome = async (): Promise<PreparedCliHome> => {
+  const credentialsB64 = serverConfig.creLocalCredentialsBase64;
+  if (!credentialsB64) {
+    return { ok: true, env: process.env, cleanup: async () => undefined };
+  }
+
+  const credentialsYaml = decodeCredentialsBase64(credentialsB64);
+  if (!credentialsYaml || !credentialsYaml.includes("RefreshToken:")) {
+    return { ok: false, error: "CRE_TRIGGER_FAILED:SIMULATION_AUTH_INVALID_CREDENTIALS_BASE64" };
+  }
+
+  const homeRoot = path.join(os.tmpdir(), `cre-home-${randomUUID()}`);
+  const creDir = path.join(homeRoot, ".cre");
+  const credsFile = path.join(creDir, "cre.yaml");
+
+  try {
+    await mkdir(creDir, { recursive: true, mode: 0o700 });
+    await writeFile(credsFile, credentialsYaml.endsWith("\n") ? credentialsYaml : `${credentialsYaml}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `CRE_TRIGGER_FAILED:SIMULATION_AUTH_WRITE_ERROR:${message}` };
+  }
+
+  return {
+    ok: true,
+    env: { ...process.env, HOME: homeRoot },
+    cleanup: async () => {
+      try {
+        await rm(homeRoot, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup failures
+      }
+    },
+  };
+};
+
 const ensureSimulationPaths = async (projectRoot: string, workflowPath: string): Promise<string | null> => {
   try {
     await access(projectRoot, fsConstants.R_OK);
@@ -193,8 +248,14 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
 
   const preparedEnv = await prepareSimulationEnvFile();
   if (!preparedEnv.ok) return asError(preparedEnv.error);
+  const preparedCliHome = await prepareCliHome();
+  if (!preparedCliHome.ok) {
+    await preparedEnv.cleanup();
+    return asError(preparedCliHome.error);
+  }
 
   const { envFile, cleanup } = preparedEnv;
+  const { env: cliEnv, cleanup: cleanupCliHome } = preparedCliHome;
 
   const args = [
     "workflow",
@@ -221,6 +282,7 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
       try {
         const { stdout } = await execFileAsync(cliBin, args, {
           cwd: process.cwd(),
+          env: cliEnv,
           timeout: serverConfig.creLocalTimeoutMs,
           maxBuffer: serverConfig.creLocalMaxBufferBytes,
           windowsHide: true,
@@ -274,6 +336,7 @@ const runSimulation = async (input: WorkflowInput): Promise<WorkflowResult> => {
     }
     return asError("CRE_TRIGGER_FAILED:SIMULATION_EXEC_ERROR:CRE_CLI_NOT_FOUND");
   } finally {
+    await cleanupCliHome();
     await cleanup();
   }
 };

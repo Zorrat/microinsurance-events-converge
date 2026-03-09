@@ -113,6 +113,7 @@ export const serverConfig = {
   creLocalBroadcast: toBoolean(process.env.CRE_LOCAL_BROADCAST, true),
   creLocalTimeoutMs: toPositiveInt(process.env.CRE_LOCAL_TIMEOUT_MS, 120000),
   creLocalMaxBufferBytes: toPositiveInt(process.env.CRE_LOCAL_MAX_BUFFER_BYTES, 10485760),
+  creLocalCredentialsBase64: process.env.CRE_LOCAL_CREDENTIALS_BASE64 || "",
 
   x402Network: normalizeX402Network(process.env.X402_NETWORK, defaultNetwork),
   x402PayTo: required(

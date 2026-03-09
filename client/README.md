@@ -120,6 +120,7 @@ Required server vars for hosted simulate mode:
 - `CRE_LOCAL_BROADCAST=true` (or `false` if you only want dry-run simulation)
 - `CRE_LOCAL_TIMEOUT_MS`
 - `CRE_LOCAL_MAX_BUFFER_BYTES`
+- `CRE_LOCAL_CREDENTIALS_BASE64` (hosted simulate only; base64 of your local `~/.cre/cre.yaml`)
 - Runtime secrets for simulation:
   - `CRE_ETH_PRIVATE_KEY` (required when `CRE_LOCAL_BROADCAST=true`)
   - `EVENTBRITE_API_TOKEN`
@@ -144,6 +145,15 @@ inside your hosted Node runtime for each paid request.
 4. If a version fails to execute (for example glibc mismatch), try GitHub release fallback artifact `cre_linux_amd64_ldd2-35.tar.gz`.
 5. If `GLIBCXX_3.4.30` is missing, bundle a compatible `libstdc++.so.6` into `client/.cre/lib` and wrap CRE execution with `LD_LIBRARY_PATH`.
 6. Copy the first working binary into `client/.cre/bin/cre`, validate with `cre version`, then run `next build`.
+
+For hosted simulate auth, you must also provide CLI credentials:
+
+1. On your local machine, run `cre whoami` and confirm you are logged in.
+2. Encode your credential file:
+   - macOS/Linux: `base64 -i ~/.cre/cre.yaml | tr -d '\n'`
+3. Set Vercel env var:
+   - `CRE_LOCAL_CREDENTIALS_BASE64=<output-from-step-2>`
+4. Redeploy.
 
 ### 3) Post-deploy validation
 
@@ -207,6 +217,9 @@ Use this mode when you cannot deploy workflows yet.
   - If using Coinbase CDP facilitator, verify `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` are valid and not expired.
 - `CRE_TRIGGER_FAILED:SIMULATION_EXEC_ERROR:CRE_CLI_NOT_FOUND`:
   - Install CRE CLI and confirm `cre` is in your shell `PATH`.
+- `CRE_TRIGGER_FAILED:SIMULATION_EXIT_1:...you are not logged in...`:
+  - Set `CRE_LOCAL_CREDENTIALS_BASE64` in Vercel to base64 content of your local `~/.cre/cre.yaml`.
+  - If credentials expire, refresh locally with `cre login`, regenerate base64, update Vercel env, and redeploy.
 - Vercel build fails with glibc/libstdc++ errors for CRE:
   - Use `npm run build:vercel:sim` as the project build command.
   - Check the deployment logs for fallback attempts across pinned CRE versions.
