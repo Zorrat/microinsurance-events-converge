@@ -17,17 +17,22 @@ export const usePaidFetch = () => {
   return useMemo(() => {
     if (!walletClient || !publicClient || !walletClient.account) return null;
     if (walletClient.chain?.id !== config.chainId) return null;
+    const account = walletClient.account;
 
     const client = new x402Client();
     const signer = toClientEvmSigner(
       {
-        address: walletClient.account.address,
-        signTypedData: (args) => walletClient.signTypedData(args),
+        address: account.address,
+        signTypedData: (args) =>
+          walletClient.signTypedData({
+            account,
+            ...args,
+          }),
         ...(walletClient.signTransaction
           ? {
               signTransaction: (args) =>
                 walletClient.signTransaction({
-                  account: walletClient.account,
+                  account,
                   ...args,
                 }),
             }

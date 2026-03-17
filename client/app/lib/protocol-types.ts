@@ -4,6 +4,48 @@ export type CapacityBand = "<50" | "50-199" | "200-1000" | ">1000" | "unknown";
 export type VenueTypeBand = "online" | "offline" | "unknown";
 export type OrganizerExperienceBand = "new" | "1-2" | "3-9" | "10-50" | ">50" | "unknown";
 
+export type PricingConfig = {
+  tierPayoutUSDC: Record<PolicyTier, string>;
+  tierMinPremiumUSDC: Record<PolicyTier, string>;
+  categoryRiskById?: Record<string, number>;
+  categoryRiskByName?: Record<string, number>;
+  defaultCategoryRiskBps?: number;
+  minCancelBps?: number;
+  maxCancelBps?: number;
+  venueTypeRiskBps?: {
+    online: number;
+    offline: number;
+    unknown: number;
+  };
+  organizerRiskBps?: {
+    new: number;
+    oneToTwo: number;
+    threeToNine: number;
+    tenToFifty: number;
+    aboveFifty: number;
+  };
+  venueRiskBandBps?: Record<GeminiRiskBand, number>;
+  complexityBandBps?: Record<GeminiRiskBand, number>;
+  expenseLoadBps: number;
+  profitLoadBps: number;
+  utilizationBandLowBps?: number;
+  utilizationBandMediumBps?: number;
+  utilizationRejectBps?: number;
+  utilizationLoadBps50To70?: number;
+  utilizationLoadBps70To85?: number;
+};
+
+export type GeminiRuntimeConfig = {
+  enabled: boolean;
+  model: string;
+  apiKey?: string;
+  baseUrl: string;
+  timeoutMs: number;
+  maxRetries: number;
+  defaultVenueRiskBand: GeminiRiskBand;
+  defaultComplexityBand: GeminiRiskBand;
+};
+
 export type Quote = {
   quoteVersion: number;
   insured: `0x${string}`;
@@ -45,7 +87,7 @@ export type ClaimInput = {
   policyId: string;
 };
 
-export type WorkflowInput = QuoteCheckInput | MintInput | ClaimInput;
+export type ProtocolInput = QuoteCheckInput | MintInput | ClaimInput;
 
 export type EventSummary = {
   eventId?: string;
@@ -103,7 +145,7 @@ export type PricingResult = {
   };
 };
 
-export type QuoteWorkflowOk = {
+export type QuoteResultOk = {
   ok: true;
   action: "QUOTE_CHECK";
   quoteValid: boolean;
@@ -115,7 +157,7 @@ export type QuoteWorkflowOk = {
   signedQuote?: SignedQuote;
 };
 
-export type MintWorkflowOk = {
+export type MintResultOk = {
   ok: true;
   action: "MINT";
   txHash?: string;
@@ -125,7 +167,7 @@ export type MintWorkflowOk = {
   note: string;
 };
 
-export type ClaimWorkflowOk = {
+export type ClaimResultOk = {
   ok: true;
   action: "CLAIM";
   decision: "PAY" | "RESOLVE_NO_PAYOUT" | "NO_OP";
@@ -134,9 +176,47 @@ export type ClaimWorkflowOk = {
   event: EventSummary;
 };
 
-export type WorkflowError = {
+export type ProtocolError = {
   ok: false;
   error: string;
 };
 
-export type WorkflowResult = QuoteWorkflowOk | MintWorkflowOk | ClaimWorkflowOk | WorkflowError;
+export type ProtocolResult = QuoteResultOk | MintResultOk | ClaimResultOk | ProtocolError;
+
+export type ReserveSnapshot = {
+  requiredReserves: bigint;
+  totalActiveLiabilityUSDC: bigint;
+  minReserveRatioBps: bigint;
+  vaultBalanceUSDC: bigint;
+};
+
+export type MintData = {
+  to: `0x${string}`;
+  eventId: string;
+  eventIdHash: `0x${string}`;
+  eventStart: bigint;
+  coverageStart: bigint;
+  coverageEnd: bigint;
+  quoteExpiry: bigint;
+  payoutUSDC: bigint;
+  premiumUSDC: bigint;
+};
+
+export type ReportData = {
+  action: 0 | 1 | 2;
+  policyId: bigint;
+  mint: MintData;
+};
+
+export type OnchainPolicy = {
+  eventIdHash: `0x${string}`;
+  eventId: string;
+  eventStart: bigint;
+  coverageStart: bigint;
+  coverageEnd: bigint;
+  quoteExpiry: bigint;
+  payoutUSDC: bigint;
+  premiumUSDC: bigint;
+  insured: `0x${string}`;
+  status: number;
+};

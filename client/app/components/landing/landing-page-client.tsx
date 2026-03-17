@@ -23,7 +23,7 @@ const sectionIllustrations = {
   protocol: {
     src: "/illustrations/protocol-ethereum.svg",
     alt: "Abstract blockchain network visualization for CoverFi architecture",
-    caption: "Wallet, x402, CRE, and onchain contracts running in one deterministic flow.",
+    caption: "Wallet, x402, a relay-backed quote engine, and onchain contracts running in one deterministic flow.",
     priority: true,
   },
   audience: {
@@ -44,7 +44,7 @@ const sectionIllustrations = {
 } satisfies Record<string, SectionIllustration>;
 
 const stackChips = [
-  "Chainlink CRE",
+  "Relay-backed execution",
   "x402 pay-to-access",
   "USDC reserves",
   "Soulbound Policy NFT",
@@ -103,9 +103,9 @@ const stackSpotlight = [
       "Paid endpoint access for quote, mint, and claim so usage is machine-readable, metered, and agent-friendly.",
   },
   {
-    title: "Chainlink CRE (Primary Execution Layer)",
+    title: "Relay Executor (Primary Execution Layer)",
     description:
-      "Orchestrates deterministic quote/mint/claim actions and delivers signed reports into onchain settlement paths.",
+      "Runs deterministic quote, mint, and claim checks in Next.js and relays settlement reports onchain.",
   },
   {
     title: "AI + Pricing Engine",
@@ -180,7 +180,7 @@ function SectionVideoCard({ embedUrl, caption }: { embedUrl: string; caption: st
 }
 
 export function LandingPageClient() {
-  const receiverUrl = config.creReceiver ? `${config.basescan}/address/${config.creReceiver}` : config.basescan;
+  const receiverUrl = config.policyReceiver ? `${config.basescan}/address/${config.policyReceiver}` : config.basescan;
   const policyNftUrl = config.policyNft ? `${config.basescan}/address/${config.policyNft}` : config.basescan;
   const policyVaultUrl = config.policyVault ? `${config.basescan}/address/${config.policyVault}` : config.basescan;
 
@@ -314,8 +314,8 @@ export function LandingPageClient() {
               <SectionHeader
                 className={styles.sectionHeader}
                 eyebrow="Stack Spotlight"
-                title="x402 + Chainlink CRE power the core loop"
-                description="CoverFi is designed for AI-agent use: deterministic paid APIs, verifiable workflow execution, and onchain settlement."
+                title="x402 + a direct relay power the core loop"
+                description="CoverFi is designed for AI-agent use: deterministic paid APIs, a server-side quote engine, and onchain settlement."
                 eyebrowClassName={styles.sectionEyebrow}
                 titleClassName={styles.sectionTitle}
                 descriptionClassName={styles.sectionDescription}
@@ -396,7 +396,7 @@ export function LandingPageClient() {
               <h2 className={styles.footerTitle}>Contracts</h2>
               <div className={styles.footerLinks}>
                 <a href={receiverUrl} target="_blank" rel="noreferrer" className={styles.footerLink}>
-                  CREReceiver
+                  PolicyReceiver
                 </a>
                 <a href={policyNftUrl} target="_blank" rel="noreferrer" className={styles.footerLink}>
                   PolicyNFT
@@ -410,9 +410,6 @@ export function LandingPageClient() {
             <div>
               <h2 className={styles.footerTitle}>Docs</h2>
               <div className={styles.footerLinks}>
-                <a href="https://docs.chain.link/cre" target="_blank" rel="noreferrer" className={styles.footerLink}>
-                  Chainlink CRE
-                </a>
                 <a
                   href="https://docs.cdp.coinbase.com/x402/docs/welcome"
                   target="_blank"

@@ -46,16 +46,26 @@ export const makeRouteConfig = (description: string, price: string): RouteConfig
 });
 
 export const quoteRouteConfig = makeRouteConfig(
-  "Quote check for event cancellation policy via CRE workflow",
+  "Quote check for event cancellation coverage",
   serverConfig.x402QuotePriceUsd,
 );
 
-export const buyRouteConfig = makeRouteConfig(
-  "Mint a policy from a previously signed quote via CRE workflow",
-  serverConfig.x402BuyPriceUsd,
-);
+export const makeBuyRouteConfig = (premiumUSDC: string): RouteConfig => ({
+  accepts: {
+    ...commonAccepts,
+    price: {
+      asset: serverConfig.usdcAddress,
+      amount: premiumUSDC,
+      extra: {
+        name: "USDC",
+        version: "2",
+      },
+    },
+  },
+  description: "Mint a policy from a previously signed quote",
+});
 
 export const claimRouteConfig = makeRouteConfig(
-  "Submit claim settlement check for an active policy via CRE workflow",
+  "Submit claim settlement check for an active policy",
   serverConfig.x402ClaimPriceUsd,
 );

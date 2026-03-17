@@ -191,12 +191,14 @@ const claimWorkflowOkSchema = z
   })
   .strict();
 
-export const workflowResultSchema = z.union([
+export const protocolResultSchema = z.union([
   quoteWorkflowOkSchema,
   mintWorkflowOkSchema,
   claimWorkflowOkSchema,
   workflowErrorSchema,
 ]);
+
+export const workflowResultSchema = protocolResultSchema;
 
 export type QuoteRequest = z.infer<typeof quoteRequestSchema>;
 export type BuyRequest = z.infer<typeof buyRequestSchema>;

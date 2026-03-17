@@ -1,20 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withX402 } from "@x402/next";
 
-import type { ClaimWorkflowOk, WorkflowError } from "@/app/lib/cre-types";
+import type { ClaimResultOk, ProtocolError } from "@/app/lib/protocol-types";
 import { claimRequestSchema, parseRequestJson } from "@/app/lib/validation";
-import { executeWorkflow } from "@/app/lib/server/cre-client";
+import { handleClaim } from "@/app/lib/server/protocol/actions/claim";
+import { createRelayGateway } from "@/app/lib/server/protocol/evm";
 import { serverConfig } from "@/app/lib/server/env";
 import { claimRouteConfig, x402Server } from "@/app/lib/server/x402";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-type ClaimRouteResponse = ClaimWorkflowOk | WorkflowError;
-const toStatusCode = (result: ClaimRouteResponse): number => {
-  if (!result.ok && result.error.startsWith("CRE_TRIGGER_FAILED:")) return 502;
-  return 200;
-};
+type ClaimRouteResponse = ClaimResultOk | ProtocolError;
 
 const postHandler = async (
   request: NextRequest,
@@ -24,23 +21,19 @@ const postHandler = async (
     return NextResponse.json({ ok: false, error: body.error }, { status: body.status });
   }
 
-  const result = await executeWorkflow({
+  const result = await handleClaim({
     action: "CLAIM",
     policyId: body.data.policyId.trim(),
     eventId: body.data.eventId.trim(),
   }, {
-    workflowId: serverConfig.creClaimWorkflowId || undefined,
+    gateway: createRelayGateway(serverConfig),
+    eventbriteApiToken: serverConfig.eventbriteApiToken,
+    eventbriteApiBaseUrl: serverConfig.eventbriteApiBaseUrl,
+    claimEventbriteApiBaseUrl: serverConfig.claimEventbriteApiBaseUrl,
   });
 
-  if (result.ok && result.action !== "CLAIM") {
-    return NextResponse.json(
-      { ok: false, error: `CRE_TRIGGER_FAILED:UNEXPECTED_ACTION_${result.action}` },
-      { status: 502 },
-    );
-  }
-
   const responseBody = result as ClaimRouteResponse;
-  return NextResponse.json(responseBody, { status: toStatusCode(responseBody) });
+  return NextResponse.json(responseBody, { status: 200 });
 };
 
 export const POST = withX402(postHandler, claimRouteConfig, x402Server);

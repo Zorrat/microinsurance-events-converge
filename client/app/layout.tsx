@@ -7,7 +7,7 @@ import { Providers } from "@/app/providers";
 
 export const metadata: Metadata = {
   title: "Converge Event Insurance",
-  description: "Micro-insurance demo powered by Chainlink CRE + x402 on Base Sepolia.",
+  description: "Micro-insurance demo powered by a Next.js relay, x402, and USDC-backed contracts on Base Sepolia.",
 };
 
 export default function RootLayout({

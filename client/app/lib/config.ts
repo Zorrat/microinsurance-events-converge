@@ -7,7 +7,6 @@ export const config = {
   appName: "Converge Event Insurance",
   chainId: safeChainId,
   chainCaip2: `eip155:${safeChainId}` as `eip155:${number}`,
-  creExecutionMode: (process.env.NEXT_PUBLIC_CRE_EXECUTION_MODE || "gateway") as "gateway" | "simulate",
   basescan: process.env.NEXT_PUBLIC_BASESCAN || "https://sepolia.basescan.org",
   baseRpcUrl: process.env.NEXT_PUBLIC_BASE_RPC_URL || "https://sepolia.base.org",
   x402FixedFeeUsd: process.env.NEXT_PUBLIC_X402_FIXED_FEE_USD || "0.01",
@@ -31,5 +30,7 @@ export const config = {
 
   policyNft: (process.env.NEXT_PUBLIC_POLICY_NFT || "") as `0x${string}`,
   policyVault: (process.env.NEXT_PUBLIC_POLICY_VAULT || "") as `0x${string}`,
-  creReceiver: (process.env.NEXT_PUBLIC_CRE_RECEIVER || "") as `0x${string}`,
+  policyReceiver: (process.env.NEXT_PUBLIC_POLICY_RECEIVER ||
+    process.env.NEXT_PUBLIC_CRE_RECEIVER ||
+    "") as `0x${string}`,
 } as const;

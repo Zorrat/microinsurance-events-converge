@@ -3,13 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "bash ./scripts/prepare-cre-sim-local-runtime.sh",
     "dev": "next dev",
     "build": "next build",
-    "prepare:cre:sim-assets": "bash ./scripts/prepare-cre-sim-assets.sh",
-    "build:vercel:sim": "bash ./scripts/build-vercel-sim.sh",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@coinbase/x402": "^2.1.0",
@@ -37,6 +35,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

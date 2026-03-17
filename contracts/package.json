@@ -1,4 +1,8 @@
 {
+  "scripts": {
+    "set:forwarder": "hardhat run scripts/set_forwarder.cjs",
+    "check:receiver": "hardhat run scripts/check_receiver.cjs"
+  },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.1.2",
     "@nomicfoundation/hardhat-ethers": "^3.1.3",

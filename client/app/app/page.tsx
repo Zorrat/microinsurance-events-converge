@@ -12,12 +12,12 @@ import { ExplanationBox } from "@/app/components/workflow/explanation-box";
 import { ResultPanel } from "@/app/components/workflow/result-panel";
 import { WorkflowStageCard } from "@/app/components/workflow/workflow-stage-card";
 import type {
-  ClaimWorkflowOk,
-  MintWorkflowOk,
+  ClaimResultOk,
+  MintResultOk,
   PolicyTier,
-  QuoteWorkflowOk,
-  WorkflowError,
-} from "@/app/lib/cre-types";
+  ProtocolError,
+  QuoteResultOk,
+} from "@/app/lib/protocol-types";
 import { config } from "@/app/lib/config";
 import {
   WORKFLOW_STAGE_CONTENT,
@@ -31,9 +31,9 @@ import { getMetaMaskProvider } from "@/app/lib/wallet/metaMaskProvider";
 
 import styles from "@/app/app/page.module.css";
 
-type QuoteRouteResponse = QuoteWorkflowOk | WorkflowError;
-type BuyRouteResponse = MintWorkflowOk | WorkflowError;
-type ClaimRouteResponse = ClaimWorkflowOk | WorkflowError;
+type QuoteRouteResponse = QuoteResultOk | ProtocolError;
+type BuyRouteResponse = MintResultOk | ProtocolError;
+type ClaimRouteResponse = ClaimResultOk | ProtocolError;
 
 type PaymentProof = {
   rawHeader: string;
@@ -57,7 +57,6 @@ type WalletPolicy = {
   insured: string;
 };
 
-const CRE_UI_WORKFLOWS_URL = "https://cre.chain.link/workflows";
 const POLICY_SCAN_LIMIT = 500;
 const POLICY_SCAN_BATCH_SIZE = 40;
 const POLICY_NFT_ABI = [
@@ -188,18 +187,6 @@ const readPaymentRequiredFromResponse = async (response: Response): Promise<unkn
   }
 };
 
-const extractAcceptedExecutionId = (
-  result: QuoteRouteResponse | BuyRouteResponse | ClaimRouteResponse | null,
-): string | null => {
-  if (!result || result.ok !== false) return null;
-  if (typeof result.error !== "string") return null;
-  const prefix = "CRE_ACCEPTED:";
-  if (!result.error.startsWith(prefix)) return null;
-
-  const executionId = result.error.slice(prefix.length).trim();
-  return executionId.length > 0 ? executionId : null;
-};
-
 const toPaymentRequiredError = (required: unknown, status: number): string => {
   const asRecord =
     required && typeof required === "object" ? (required as Record<string, unknown>) : null;
@@ -244,7 +231,7 @@ const normalizeWorkflowResult = (
 };
 
 const claimDecisionCopy = (
-  decision: ClaimWorkflowOk["decision"],
+  decision: ClaimResultOk["decision"],
 ): { title: string; description: string } => {
   if (decision === "PAY") {
     return {
@@ -343,9 +330,19 @@ export default function WorkflowDemoPage() {
     return null;
   }, [hasMetaMaskProvider, isConnected, isWrongNetwork, paidFetch]);
 
-  const quoteAcceptedExecutionId = extractAcceptedExecutionId(quoteResponse);
-  const buyAcceptedExecutionId = extractAcceptedExecutionId(buyResponse);
-  const claimAcceptedExecutionId = extractAcceptedExecutionId(claimResponse);
+  const buyReadinessError = useMemo(() => {
+    if (readinessError) return readinessError;
+    if (!quoteResponse) return "Request an approved quote before buying coverage.";
+    if (!quoteResponse.ok) return `Quote step failed: ${quoteResponse.error}`;
+    if (quoteResponse.action !== "QUOTE_CHECK") return "Quote response is not in a buyable state.";
+    if (!quoteResponse.quoteValid) {
+      return quoteResponse.reason
+        ? `Quote was rejected: ${quoteResponse.reason}`
+        : "Quote was not approved for purchase.";
+    }
+    if (!quoteSigned) return "Quote is missing signed quote data required for minting.";
+    return null;
+  }, [quoteResponse, quoteSigned, readinessError]);
 
   const quoteStage = WORKFLOW_STAGE_CONTENT.quote;
   const buyStage = WORKFLOW_STAGE_CONTENT.buy;
@@ -605,7 +602,7 @@ export default function WorkflowDemoPage() {
         }
       }
     } catch (error) {
-      const fallback = { ok: false, error: asErrorMessage(error) } as WorkflowError;
+      const fallback = { ok: false, error: asErrorMessage(error) } as ProtocolError;
       setQuoteResponse(fallback);
       setQuoteRaw(JSON.stringify(fallback, null, 2));
       setQuotePaymentProof(null);
@@ -642,7 +639,7 @@ export default function WorkflowDemoPage() {
         void loadWalletPolicies();
       }
     } catch (error) {
-      const fallback = { ok: false, error: asErrorMessage(error) } as WorkflowError;
+      const fallback = { ok: false, error: asErrorMessage(error) } as ProtocolError;
       setBuyResponse(fallback);
       setBuyRaw(JSON.stringify(fallback, null, 2));
       setBuyPaymentProof(null);
@@ -678,7 +675,7 @@ export default function WorkflowDemoPage() {
       setClaimRaw(raw);
       setClaimPaymentProof(paymentProof);
     } catch (error) {
-      const fallback = { ok: false, error: asErrorMessage(error) } as WorkflowError;
+      const fallback = { ok: false, error: asErrorMessage(error) } as ProtocolError;
       setClaimResponse(fallback);
       setClaimRaw(JSON.stringify(fallback, null, 2));
       setClaimPaymentProof(null);
@@ -718,9 +715,16 @@ export default function WorkflowDemoPage() {
   const canImportMintedNft = Boolean(
     mintedTokenId && /^0x[0-9a-fA-F]{40}$/.test(mintedPolicyNftAddress) && hasMetaMaskProvider,
   );
+  const canImportDetectedPolicyNfts = Boolean(
+    /^0x[0-9a-fA-F]{40}$/.test(config.policyNft) && hasMetaMaskProvider,
+  );
 
-  const onImportMintedNft = async () => {
-    if (!mintedTokenId || !/^0x[0-9a-fA-F]{40}$/.test(mintedPolicyNftAddress)) {
+  const importPolicyNft = async (
+    tokenId: string,
+    nftAddress: string,
+    sourceLabel = "NFT",
+  ) => {
+    if (!tokenId || !/^\d+$/.test(tokenId) || !/^0x[0-9a-fA-F]{40}$/.test(nftAddress)) {
       setNftImportStatus("unavailable");
       setNftImportMessage("Policy NFT address or token ID is not available yet.");
       return;
@@ -742,15 +746,15 @@ export default function WorkflowDemoPage() {
         params: {
           type: "ERC721",
           options: {
-            address: mintedPolicyNftAddress,
-            tokenId: mintedTokenId,
+            address: nftAddress as `0x${string}`,
+            tokenId,
           },
         },
       });
 
       if (result === true) {
         setNftImportStatus("success");
-        setNftImportMessage("NFT import request sent to MetaMask.");
+        setNftImportMessage(`${sourceLabel} import request sent to MetaMask.`);
         return;
       }
 
@@ -760,6 +764,10 @@ export default function WorkflowDemoPage() {
       setNftImportStatus("failed");
       setNftImportMessage(`Failed to import NFT: ${asErrorMessage(error)}`);
     }
+  };
+
+  const onImportMintedNft = async () => {
+    await importPolicyNft(mintedTokenId, mintedPolicyNftAddress, `Policy NFT #${mintedTokenId}`);
   };
 
   return (
@@ -984,14 +992,22 @@ export default function WorkflowDemoPage() {
               checks={buyStage.operatorChecks}
             />
 
-            <p className={styles.inlineText}>Mint fee: ${config.x402BuyFeeUsd} USDC</p>
+            <p className={styles.inlineText}>
+              Premium due: {quotePremiumBase ? formatUsdcAmount(quotePremiumBase) : "Get a quote to price this step."}
+            </p>
+
+            <p
+              className={`${styles.statusMessage} ${buyReadinessError ? styles.statusError : styles.statusOk}`}
+            >
+              {buyReadinessError || "Signed quote is ready. Buying will request an x402 wallet signature and then mint via the receiver."}
+            </p>
 
             <div className={styles.actionRow}>
               <button
                 type="button"
                 className={styles.primaryAction}
                 onClick={onBuy}
-                disabled={Boolean(readinessError) || !canBuy || loading !== null}
+                disabled={Boolean(buyReadinessError) || !canBuy || loading !== null}
               >
                 {loading === "buy" ? "Submitting mint..." : "Buy Coverage"}
               </button>
@@ -1091,14 +1107,9 @@ export default function WorkflowDemoPage() {
                   {walletPolicies.map((item) => {
                     const isSelected = item.policyId === policyId;
                     return (
-                      <button
+                      <article
                         key={item.policyId}
-                        type="button"
                         className={`${styles.policyCard} ${isSelected ? styles.policyCardSelected : ""}`}
-                        onClick={() => {
-                          setPolicyId(item.policyId);
-                          if (item.eventId) setClaimEventId(item.eventId);
-                        }}
                       >
                         <div className={styles.policyCardHead}>
                           <span className={styles.policyCardTitle}>Policy #{item.policyId}</span>
@@ -1110,7 +1121,27 @@ export default function WorkflowDemoPage() {
                         <p className={styles.policyCardLine}>
                           Coverage: {formatUnixSeconds(item.coverageStart)} to {formatUnixSeconds(item.coverageEnd)}
                         </p>
-                      </button>
+                        <div className={styles.actionRow}>
+                          <button
+                            type="button"
+                            className={styles.secondaryAction}
+                            onClick={() => {
+                              setPolicyId(item.policyId);
+                              if (item.eventId) setClaimEventId(item.eventId);
+                            }}
+                          >
+                            {isSelected ? "Selected" : "Use for Claim"}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.secondaryAction}
+                            onClick={() => void importPolicyNft(item.policyId, config.policyNft, `Policy NFT #${item.policyId}`)}
+                            disabled={!canImportDetectedPolicyNfts || loading !== null}
+                          >
+                            Import NFT
+                          </button>
+                        </div>
+                      </article>
                     );
                   })}
                 </div>
@@ -1174,16 +1205,14 @@ export default function WorkflowDemoPage() {
               <span className={styles.infoDetailValue}>Base Sepolia ({config.chainId})</span>
             </div>
             <div className={styles.infoDetail}>
-              <span className={styles.infoDetailLabel}>CRE Mode</span>
-              <span className={styles.infoDetailValue}>{config.creExecutionMode}</span>
-            </div>
-            <div className={styles.infoDetail}>
               <span className={styles.infoDetailLabel}>x402 Quote Fee</span>
               <span className={styles.infoDetailValue}>${config.x402QuoteFeeUsd} USDC</span>
             </div>
             <div className={styles.infoDetail}>
-              <span className={styles.infoDetailLabel}>x402 Buy Fee</span>
-              <span className={styles.infoDetailValue}>${config.x402BuyFeeUsd} USDC</span>
+              <span className={styles.infoDetailLabel}>Quoted Premium</span>
+              <span className={styles.infoDetailValue}>
+                {quotePremiumBase ? formatUsdcAmount(quotePremiumBase) : "Get a quote first"}
+              </span>
             </div>
             <div className={styles.infoDetail}>
               <span className={styles.infoDetailLabel}>x402 Claim Fee</span>
@@ -1307,37 +1336,6 @@ export default function WorkflowDemoPage() {
               {!quotePaymentProof && !buyPaymentProof && !claimPaymentProof ? (
                 <p className={styles.inlineText}>No payment proof yet.</p>
               ) : null}
-            </div>
-          </details>
-
-          <details className={styles.techDetails}>
-            <summary className={styles.techSummary}>CRE Execution IDs</summary>
-            <div className={styles.techBody}>
-              {quoteAcceptedExecutionId ? (
-                <div className={styles.infoCard}>
-                  <h3 className={styles.infoCardTitle}>Quote</h3>
-                  <p className={styles.inlineText}>{quoteAcceptedExecutionId}</p>
-                </div>
-              ) : null}
-              {buyAcceptedExecutionId ? (
-                <div className={styles.infoCard}>
-                  <h3 className={styles.infoCardTitle}>Buy / Mint</h3>
-                  <p className={styles.inlineText}>{buyAcceptedExecutionId}</p>
-                </div>
-              ) : null}
-              {claimAcceptedExecutionId ? (
-                <div className={styles.infoCard}>
-                  <h3 className={styles.infoCardTitle}>Claim</h3>
-                  <p className={styles.inlineText}>{claimAcceptedExecutionId}</p>
-                </div>
-              ) : null}
-              {quoteAcceptedExecutionId || buyAcceptedExecutionId || claimAcceptedExecutionId ? (
-                <a className={styles.inlineLink} href={CRE_UI_WORKFLOWS_URL} target="_blank" rel="noreferrer">
-                  Track in CRE UI →
-                </a>
-              ) : (
-                <p className={styles.inlineText}>No pending CRE execution IDs.</p>
-              )}
             </div>
           </details>
 
