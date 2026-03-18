@@ -27,14 +27,14 @@ jobs:
         working-directory: client
     env:
       NEXT_TELEMETRY_DISABLED: "1"
-      CRE_EXECUTION_MODE: "simulate"
+      # Build-only placeholders for required server config.
+      POLICY_RECEIVER: "0xF0e47056A1ab670F11Ae066F1661952f5ae35d1d"
+      RELAY_PRIVATE_KEY: "0x1111111111111111111111111111111111111111111111111111111111111111"
+      QUOTE_SIGNER_PK: "0x2222222222222222222222222222222222222222222222222222222222222222"
+      EVENTBRITE_API_TOKEN: "ci-placeholder-token"
       X402_PAY_TO: "0x0000000000000000000000000000000000000001"
       # Use non-Coinbase URL in CI build so CDP keys are not required.
       X402_FACILITATOR_URL: "https://example.com/x402"
-      CRE_LOCAL_PROJECT_ROOT: "./.cre/workflows"
-      CRE_LOCAL_WORKFLOW_PATH: "./event-microinsurance"
-      CRE_LOCAL_ENV_FROM_PROCESS: "true"
-      CRE_LOCAL_CLI_BIN: "./.cre/bin/cre"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,9 +51,6 @@ jobs:
 
       - name: Lint
         run: npm run lint
-
-      - name: Stage CRE workflow assets
-        run: npm run prepare:cre:sim-assets
 
       - name: Build
         run: npm run build
